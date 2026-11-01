@@ -330,16 +330,24 @@ private fun RetroMenuScreen(
         }
     }
 
+    val virusCount = (level + 1) * 4
+    val virusWord = if (virusCount == 4) "VIRY" else "VIRŮ"
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Horni retro lista: Rekord vlevo, prepinace Vibraci a Zvuku vpravo
+        // 1. Horni retro lista: Rekord vlevo, jednoradkove prepinace Vibraci a Zvuku vpravo
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF0F172A))
+                .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
+                .padding(horizontal = 10.dp, vertical = 7.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -347,53 +355,38 @@ private fun RetroMenuScreen(
                 text = "REKORD ${topScore.toString().padStart(7, '0')}",
                 color = Color(0xFFFACC15),
                 fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 13.sp,
+                maxLines = 1,
+                softWrap = false
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF1E293B))
-                        .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
-                        .clickable { onToggleVibration() }
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = if (vibrationMuted) "VIB: VYP" else "VIB: ZAP",
-                        color = if (vibrationMuted) Color(0xFFF87171) else Color(0xFF38BDF8),
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF1E293B))
-                        .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
-                        .clickable { onToggleMute() }
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = if (soundMuted) "ZVUK: VYP" else "ZVUK: ZAP",
-                        color = if (soundMuted) Color(0xFFF87171) else Color(0xFF4ADE80),
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp
-                    )
-                }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MenuToggleChip(
+                    label = if (vibrationMuted) "VIB: VYP" else "VIB: ZAP",
+                    active = !vibrationMuted,
+                    activeColor = Color(0xFF38BDF8),
+                    onClick = onToggleVibration
+                )
+                MenuToggleChip(
+                    label = if (soundMuted) "ZVUK: VYP" else "ZVUK: ZAP",
+                    active = !soundMuted,
+                    activeColor = Color(0xFF4ADE80),
+                    onClick = onToggleMute
+                )
             }
         }
 
-        // Pixel-artovy banner s doktorem a viry
+        // 2. Pixel-artovy banner s doktorem a viry
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF0F172A))
                 .border(3.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
-                .padding(vertical = 10.dp, horizontal = 10.dp),
+                .padding(vertical = 8.dp, horizontal = 10.dp),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -402,25 +395,26 @@ private fun RetroMenuScreen(
                     color = Color(0xFFEF4444),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 27.sp,
-                    textAlign = TextAlign.Center
+                    fontSize = 26.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
                 )
                 Text(
                     text = "8-BITOVÝ LIKVIDÁTOR VIRŮ",
                     color = Color(0xFF93C5FD),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
-                    textAlign = TextAlign.Center
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                Canvas(modifier = Modifier.size(width = 220.dp, height = 48.dp)) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Canvas(modifier = Modifier.size(width = 216.dp, height = 44.dp)) {
                     val cell = size.height * 0.72f
                     val yOff = (size.height - cell) / 2f
                     drawPixelVirus(Offset(size.width * 0.08f, yOff), cell, cell, PillColor.RED, animFrame)
                     drawPixelVirus(Offset(size.width * 0.31f, yOff), cell, cell, PillColor.YELLOW, animFrame)
                     drawPixelVirus(Offset(size.width * 0.54f, yOff), cell, cell, PillColor.BLUE, animFrame)
-                    // Spojena dvoubarevna kapsle vpravo
                     val pillCell = cell * 0.82f
                     val pillY = (size.height - pillCell) / 2f
                     drawCapsuleHalf(
@@ -441,30 +435,31 @@ private fun RetroMenuScreen(
             }
         }
 
-        // Nastaveni hry po vzoru NES Dr. Mario
+        // 3. Nastaveni hry
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF0F172A))
                 .border(2.dp, Color(0xFF3B82F6), RoundedCornerShape(12.dp))
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // 1. ÚROVEŇ VIRŮ (00 - 20)
+            // ÚROVEŇ VIRŮ (00 - 20)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "ÚROVEŇ VIRŮ (${(level + 1) * 4} VIRŮ)",
+                    text = "ÚROVEŇ VIRŮ ($virusCount $virusWord)",
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(5.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -474,11 +469,11 @@ private fun RetroMenuScreen(
                     RetroStepButton("-") { onLevelChange(level - 1) }
                     Box(
                         modifier = Modifier
-                            .width(66.dp)
+                            .width(64.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF070A14))
                             .border(2.dp, Color(0xFFE2E8F0), RoundedCornerShape(6.dp))
-                            .padding(vertical = 6.dp),
+                            .padding(vertical = 5.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -486,7 +481,8 @@ private fun RetroMenuScreen(
                             color = Color.White,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 20.sp
+                            fontSize = 19.sp,
+                            maxLines = 1
                         )
                     }
                     RetroStepButton("+") { onLevelChange(level + 1) }
@@ -494,7 +490,7 @@ private fun RetroMenuScreen(
                 }
             }
 
-            // 2. RYCHLOST PÁDU (POMALÁ / STŘEDNÍ / RYCHLÁ)
+            // RYCHLOST PÁDU (POMALÁ / STŘEDNÍ / RYCHLÁ)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
@@ -504,10 +500,11 @@ private fun RetroMenuScreen(
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(5.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -525,7 +522,7 @@ private fun RetroMenuScreen(
                                     shape = RoundedCornerShape(8.dp)
                                 )
                                 .clickable { onSpeedChange(item) }
-                                .padding(vertical = 9.dp),
+                                .padding(vertical = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -533,14 +530,16 @@ private fun RetroMenuScreen(
                                 color = Color.White,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
                 }
             }
 
-            // 3. DOPROVODNÁ HUDBA (FEVER / CHILL / VYP)
+            // DOPROVODNÁ HUDBA (FEVER / CHILL / VYP)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
@@ -550,10 +549,11 @@ private fun RetroMenuScreen(
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(5.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -571,7 +571,7 @@ private fun RetroMenuScreen(
                                     shape = RoundedCornerShape(8.dp)
                                 )
                                 .clickable { onMusicChange(track) }
-                                .padding(vertical = 9.dp),
+                                .padding(vertical = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -579,7 +579,9 @@ private fun RetroMenuScreen(
                                 color = Color.White,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 14.sp
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -587,10 +589,11 @@ private fun RetroMenuScreen(
             }
         }
 
-        // Spodni tlacitka: POKRAČOVAT VE HŘE (pokud existuje ulozena hra) + NOVÁ HRA
+        // 4. Spodni tlacitka (POKRAČOVAT + NOVÁ HRA) a copyright paticka
         Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (savedGame != null) {
                 Box(
@@ -598,9 +601,9 @@ private fun RetroMenuScreen(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
                         .background(Color(0xFF3B82F6))
-                        .border(3.dp, Color(0xFFFDE047), RoundedCornerShape(10.dp))
+                        .border(2.dp, Color(0xFFFDE047), RoundedCornerShape(10.dp))
                         .clickable { onContinueGame() }
-                        .padding(vertical = 11.dp, horizontal = 10.dp),
+                        .padding(vertical = 10.dp, horizontal = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -608,8 +611,10 @@ private fun RetroMenuScreen(
                         color = Color.White,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.sp,
-                        textAlign = TextAlign.Center
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
@@ -619,9 +624,9 @@ private fun RetroMenuScreen(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFF22C55E))
-                    .border(3.dp, Color.White, RoundedCornerShape(10.dp))
+                    .border(2.dp, Color.White, RoundedCornerShape(10.dp))
                     .clickable { onStartNewGame() }
-                    .padding(vertical = 12.dp, horizontal = 12.dp),
+                    .padding(vertical = 11.dp, horizontal = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -629,11 +634,54 @@ private fun RetroMenuScreen(
                     color = Color(0xFF052E16),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 19.sp,
-                    textAlign = TextAlign.Center
+                    fontSize = 18.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
                 )
             }
+
+            Text(
+                text = "© 2026 PAVEL MAREŠ",
+                color = Color(0xFF94A3B8),
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 1
+            )
         }
+    }
+}
+
+@Composable
+private fun MenuToggleChip(
+    label: String,
+    active: Boolean,
+    activeColor: Color,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0xFF1E293B))
+            .border(
+                width = 1.dp,
+                color = if (active) activeColor else Color(0xFF475569),
+                shape = RoundedCornerShape(6.dp)
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = if (active) activeColor else Color(0xFFF87171),
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            fontSize = 10.sp,
+            maxLines = 1,
+            softWrap = false
+        )
     }
 }
 
@@ -641,7 +689,7 @@ private fun RetroMenuScreen(
 private fun RetroStepButton(label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(38.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF1E293B))
             .border(2.dp, Color(0xFF94A3B8), RoundedCornerShape(8.dp))
@@ -653,7 +701,8 @@ private fun RetroStepButton(label: String, onClick: () -> Unit) {
             color = Color.White,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.ExtraBold,
-            fontSize = 15.sp
+            fontSize = 14.sp,
+            maxLines = 1
         )
     }
 }
@@ -690,7 +739,6 @@ private fun DrPilulkaGameScreen(
 
     val focusRequester = remember { FocusRequester() }
 
-    // Pocet zbyvajicich viru celkem i podle barev (pro lupu vlevo)
     val redViruses = remember(board) { countViruses(board, PillColor.RED) }
     val yellowViruses = remember(board) { countViruses(board, PillColor.YELLOW) }
     val blueViruses = remember(board) { countViruses(board, PillColor.BLUE) }
@@ -773,7 +821,6 @@ private fun DrPilulkaGameScreen(
         }
     }
 
-    // Spusteni hry (obnoveni ulozene hry nebo start noveho levelu)
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
         if (initialSavedState != null && countAllViruses(initialSavedState.board) > 0) {
@@ -790,7 +837,6 @@ private fun DrPilulkaGameScreen(
         }
     }
 
-    // Animace tanecniho kroku viru v lahvi a pod lupou
     LaunchedEffect(Unit) {
         while (true) {
             delay(280L)
@@ -947,7 +993,6 @@ private fun DrPilulkaGameScreen(
         lockAndEvaluate(cap)
     }
 
-    // Hlavni herni smycka (pohodovy pad pilulky, animace zmizeni a kompletni kaskadova gravitace)
     LaunchedEffect(phase, speed) {
         when (phase) {
             PlayPhase.FALLING -> {
@@ -1243,13 +1288,11 @@ private fun DrPilulkaGameScreen(
                         val bottleTopOffset = (size.height - totalBottleH) / 2f
                         val gridTop = bottleTopOffset + cellH * neckUnits
 
-                        // Hrdlo lahve nahoře (otevřené nad sloupci 3 a 4)
                         val neckLeft = gridLeft + cellW * 2.5f
                         val neckRight = gridLeft + cellW * 5.5f
                         val rimTop = bottleTopOffset + cellH * 0.15f
                         val neckTop = bottleTopOffset + cellH * 0.50f
 
-                        // Vnitřní tmavé pozadí lahve
                         drawRoundRect(
                             color = Color(0xFF05070E),
                             topLeft = Offset(gridLeft - 4f, gridTop - 4f),
@@ -1257,7 +1300,6 @@ private fun DrPilulkaGameScreen(
                             cornerRadius = CornerRadius(8f, 8f)
                         )
 
-                        // Jemná pixelová mřížka uvnitř lahve
                         for (r in 0..GRID_ROWS) {
                             val y = gridTop + r * cellH
                             drawLine(
@@ -1277,7 +1319,6 @@ private fun DrPilulkaGameScreen(
                             )
                         }
 
-                        // Stěny hrdla a prstenec lahve
                         val bottleWallColor = Color(0xFFE2E8F0)
                         val wallStroke = 5f
                         drawRect(
@@ -1328,7 +1369,6 @@ private fun DrPilulkaGameScreen(
                             strokeWidth = wallStroke
                         )
 
-                        // Vykreslení obsahu mřížky 8 × 16
                         for (r in 0 until GRID_ROWS) {
                             for (c in 0 until GRID_COLS) {
                                 val cellItem = board[r][c]
@@ -1343,7 +1383,6 @@ private fun DrPilulkaGameScreen(
                             }
                         }
 
-                        // Vykreslení právě padající kapsle
                         activeCapsule?.let { cap ->
                             val pos1 = Offset(gridLeft + cap.x * cellW, gridTop + cap.y * cellH)
                             if (cap.isVertical) {
@@ -1562,7 +1601,8 @@ private fun MiniHeaderButton(label: String, color: Color, onClick: () -> Unit) {
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
             fontSize = 10.sp,
-            maxLines = 1
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
@@ -1765,7 +1805,6 @@ private fun DrawScope.drawCapsuleHalf(
     val r = minOf(w, h) * 0.46f
     val border = 1.6f
 
-    // 1. Vnější tmavý obrys
     drawRoundRect(
         color = color.darkHex,
         topLeft = Offset(x, y),
@@ -1804,7 +1843,6 @@ private fun DrawScope.drawCapsuleHalf(
         else -> Unit
     }
 
-    // 2. Vnitřní jasná výplň pilulky
     drawRoundRect(
         color = color.mainHex,
         topLeft = Offset(x + border, y + border),
@@ -1843,7 +1881,6 @@ private fun DrawScope.drawCapsuleHalf(
         else -> Unit
     }
 
-    // 3. 8bitový bílý odlesk na povrchu pilulky
     drawRoundRect(
         color = color.lightHex,
         topLeft = Offset(x + w * 0.20f, y + h * 0.18f),
@@ -2052,7 +2089,6 @@ private fun markMatchesForClearing(
     val toClear = Array(GRID_ROWS) { BooleanArray(GRID_COLS) }
     var foundAny = false
 
-    // 1. Vodorovné sekvence 4 a více stejných barev
     for (r in 0 until GRID_ROWS) {
         var c = 0
         while (c < GRID_COLS) {
@@ -2080,7 +2116,6 @@ private fun markMatchesForClearing(
         }
     }
 
-    // 2. Svislé sekvence 4 a více stejných barev
     for (c in 0 until GRID_COLS) {
         var r = 0
         while (r < GRID_ROWS) {
