@@ -9,6 +9,7 @@ import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryAmbient
 import platform.AVFAudio.setActive
 import platform.Foundation.NSData
+import platform.Foundation.NSUserDefaults
 import platform.Foundation.create
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
@@ -16,6 +17,21 @@ actual object SoundPlatform {
     private var musicPlayer: AVAudioPlayer? = null
     private val sfxPlayers = mutableMapOf<SfxType, AVAudioPlayer>()
     private var sessionConfigured = false
+
+    actual fun saveString(key: String, value: String) {
+        try {
+            NSUserDefaults.standardUserDefaults.setObject(value, forKey = key)
+        } catch (_: Throwable) {
+        }
+    }
+
+    actual fun loadString(key: String): String? {
+        return try {
+            NSUserDefaults.standardUserDefaults.stringForKey(key)
+        } catch (_: Throwable) {
+            null
+        }
+    }
 
     private fun ensureSession() {
         if (!sessionConfigured) {

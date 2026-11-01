@@ -36,9 +36,37 @@ private fun jsStopMusic(): Unit = js("""
 })()
 """)
 
+private fun jsSavePref(key: String, value: String): Unit = js("""
+(function() {
+    try {
+        window.localStorage.setItem(key, value);
+    } catch (e) {}
+})()
+""")
+
+private fun jsLoadPref(key: String): String = js("""
+(function() {
+    try {
+        var v = window.localStorage.getItem(key);
+        return v !== null ? v : "";
+    } catch (e) {
+        return "";
+    }
+})()
+""")
+
 actual object SoundPlatform {
     private val musicBase64Cache = mutableMapOf<MusicTrack, String>()
     private val sfxBase64Cache = mutableMapOf<SfxType, String>()
+
+    actual fun saveString(key: String, value: String) {
+        jsSavePref(key, value)
+    }
+
+    actual fun loadString(key: String): String? {
+        val res = jsLoadPref(key)
+        return if (res.isEmpty()) null else res
+    }
 
     actual fun playLoopingWav(track: MusicTrack, pcmShorts: ShortArray, wavBytes: ByteArray) {
         if (wavBytes.isEmpty()) return

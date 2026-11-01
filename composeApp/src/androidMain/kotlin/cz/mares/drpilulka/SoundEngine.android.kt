@@ -1,5 +1,6 @@
 package cz.mares.drpilulka
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -7,6 +8,35 @@ import android.media.AudioTrack
 actual object SoundPlatform {
     private var musicTrackPlayer: AudioTrack? = null
     private val sfxPlayers = mutableMapOf<SfxType, AudioTrack>()
+
+    private fun getAppContext(): Context? {
+        return try {
+            val activityThread = Class.forName("android.app.ActivityThread")
+            val method = activityThread.getMethod("currentApplication")
+            method.invoke(null) as? Context
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    actual fun saveString(key: String, value: String) {
+        try {
+            val ctx = getAppContext() ?: return
+            val prefs = ctx.getSharedPreferences("drpilulka_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putString(key, value).apply()
+        } catch (_: Throwable) {
+        }
+    }
+
+    actual fun loadString(key: String): String? {
+        return try {
+            val ctx = getAppContext() ?: return null
+            val prefs = ctx.getSharedPreferences("drpilulka_prefs", Context.MODE_PRIVATE)
+            prefs.getString(key, null)
+        } catch (_: Throwable) {
+            null
+        }
+    }
 
     actual fun playLoopingWav(track: MusicTrack, pcmShorts: ShortArray, wavBytes: ByteArray) {
         stopLoopingMusic()

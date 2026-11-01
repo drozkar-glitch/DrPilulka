@@ -1,12 +1,9 @@
 package cz.mares.drpilulka
 
-import kotlin.math.PI
-import kotlin.math.sin
-
 enum class MusicTrack(val label: String) {
     FEVER("FEVER"),
     CHILL("CHILL"),
-    OFF("OFF")
+    OFF("VYP")
 }
 
 enum class SfxType {
@@ -24,6 +21,70 @@ expect object SoundPlatform {
     fun playLoopingWav(track: MusicTrack, pcmShorts: ShortArray, wavBytes: ByteArray)
     fun stopLoopingMusic()
     fun playSfxWav(sfx: SfxType, pcmShorts: ShortArray, wavBytes: ByteArray)
+    fun saveString(key: String, value: String)
+    fun loadString(key: String): String?
+}
+
+object GameStorage {
+    private const val KEY_TOP_SCORE = "drpilulka_top_score"
+    private const val KEY_LAST_LEVEL = "drpilulka_last_level"
+    private const val KEY_LAST_SPEED = "drpilulka_last_speed"
+    private const val KEY_LAST_MUSIC = "drpilulka_last_music"
+    private const val KEY_MUTED = "drpilulka_muted"
+    private const val KEY_SAVED_GAME = "drpilulka_saved_game_v1"
+
+    fun loadTopScore(): Int {
+        return SoundPlatform.loadString(KEY_TOP_SCORE)?.toIntOrNull() ?: 10000
+    }
+
+    fun saveTopScore(score: Int) {
+        SoundPlatform.saveString(KEY_TOP_SCORE, score.toString())
+    }
+
+    fun loadLastLevel(): Int {
+        return (SoundPlatform.loadString(KEY_LAST_LEVEL)?.toIntOrNull() ?: 0).coerceIn(0, 20)
+    }
+
+    fun saveLastLevel(level: Int) {
+        SoundPlatform.saveString(KEY_LAST_LEVEL, level.coerceIn(0, 20).toString())
+    }
+
+    fun loadLastSpeedName(): String {
+        return SoundPlatform.loadString(KEY_LAST_SPEED) ?: "MED"
+    }
+
+    fun saveLastSpeedName(name: String) {
+        SoundPlatform.saveString(KEY_LAST_SPEED, name)
+    }
+
+    fun loadLastMusicName(): String {
+        return SoundPlatform.loadString(KEY_LAST_MUSIC) ?: "FEVER"
+    }
+
+    fun saveLastMusicName(name: String) {
+        SoundPlatform.saveString(KEY_LAST_MUSIC, name)
+    }
+
+    fun loadMuted(): Boolean {
+        return SoundPlatform.loadString(KEY_MUTED) == "1"
+    }
+
+    fun saveMuted(muted: Boolean) {
+        SoundPlatform.saveString(KEY_MUTED, if (muted) "1" else "0")
+    }
+
+    fun saveGameData(serialized: String) {
+        SoundPlatform.saveString(KEY_SAVED_GAME, serialized)
+    }
+
+    fun loadGameData(): String? {
+        val raw = SoundPlatform.loadString(KEY_SAVED_GAME)
+        return if (raw.isNullOrBlank()) null else raw
+    }
+
+    fun clearSavedGame() {
+        SoundPlatform.saveString(KEY_SAVED_GAME, "")
+    }
 }
 
 object SoundEngine {
@@ -113,8 +174,9 @@ object RetroSynth {
     private const val A5 = 880.00f
     private const val B5 = 987.77f
     private const val C6 = 1046.50f
+    private const val G2_FREQ = 98.00f
 
-    // Skladba FEVER (64 kroku po 1/16 taktu, rychlost 125 ms na krok = 8.0 s smycka)
+    // Skladba FEVER (64 kroku po 1/16 taktu)
     fun synthesizeFeverLoop(): ShortArray {
         val stepSec = 0.12f
         val leadNotes = floatArrayOf(
@@ -150,7 +212,7 @@ object RetroSynth {
         return renderChiptunePattern(leadNotes, bassNotes, stepSec, dutyCycle = 0.25f)
     }
 
-    // Skladba CHILL (64 kroku po 1/16 taktu, rychlost 130 ms na krok)
+    // Skladba CHILL (64 kroku po 1/16 taktu)
     fun synthesizeChillLoop(): ShortArray {
         val stepSec = 0.13f
         val leadNotes = floatArrayOf(
@@ -186,8 +248,6 @@ object RetroSynth {
         return renderChiptunePattern(leadNotes, bassNotes, stepSec, dutyCycle = 0.50f)
     }
 
-    private const val G2_FREQ = 98.00f
-
     private fun renderChiptunePattern(
         leadNotes: FloatArray,
         bassNotes: FloatArray,
@@ -212,7 +272,7 @@ object RetroSynth {
             for (i in 0 until stepSamples) {
                 val progress = i.toFloat() / stepSamples.toFloat()
 
-                // Kanal 1: Pulse / Square vlna (hlavni melodie)
+                // Kanal 1: Obdelnikova vlna (hlavni melodie)
                 var leadSample = 0f
                 if (lFreq > 0f) {
                     leadPhase = (leadPhase + lFreq / SAMPLE_RATE) % 1.0f
@@ -221,7 +281,7 @@ object RetroSynth {
                     leadSample = rawPulse * env * 0.32f
                 }
 
-                // Kanal 2: Triangle vlna (8bitova basa)
+                // Kanal 2: Trojuhelnikova vlna (8bitova basa)
                 var bassSample = 0f
                 if (bFreq > 0f) {
                     bassPhase = (bassPhase + bFreq / SAMPLE_RATE) % 1.0f
@@ -234,7 +294,7 @@ object RetroSynth {
                     bassSample = rawTri * env * 0.36f
                 }
 
-                // Kanal 3: Lehky 8bitovy bicak / hi-hat sum
+                // Kanal 3: 8bitovy bicak / hi-hat sum
                 var noiseSample = 0f
                 if (isSnare && i < stepSamples / 3) {
                     val bit = ((lfsr shr 0) xor (lfsr shr 1)) and 1
@@ -374,13 +434,13 @@ object RetroSynth {
         writeIntLE(4, totalSize - 8)
         writeAscii(8, "WAVE")
         writeAscii(12, "fmt ")
-        writeIntLE(16, 16) // PCM chunk size
-        writeShortLE(20, 1) // AudioFormat 1 = PCM
-        writeShortLE(22, 1) // 1 kanal (Mono)
+        writeIntLE(16, 16)
+        writeShortLE(20, 1)
+        writeShortLE(22, 1)
         writeIntLE(24, SAMPLE_RATE)
-        writeIntLE(28, SAMPLE_RATE * 2) // ByteRate
-        writeShortLE(32, 2) // BlockAlign
-        writeShortLE(34, 16) // BitsPerSample
+        writeIntLE(28, SAMPLE_RATE * 2)
+        writeShortLE(32, 2)
+        writeShortLE(34, 16)
         writeAscii(36, "data")
         writeIntLE(40, dataSize)
 

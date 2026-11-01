@@ -86,10 +86,10 @@ data class GridCell(
     val color: PillColor? = null
 )
 
-enum class SpeedLevel(val label: String, val baseDelayMs: Long) {
-    LOW("LOW", 1050L),
-    MED("MED", 750L),
-    HI("HI", 480L)
+enum class SpeedLevel(val label: String, val shortLabel: String, val baseDelayMs: Long) {
+    LOW("POMALÁ", "POM", 1050L),
+    MED("STŘEDNÍ", "STŘ", 750L),
+    HI("RYCHLÁ", "RYC", 480L)
 }
 
 enum class ScreenMode {
@@ -114,15 +114,41 @@ data class ActiveCapsule(
     val colorB: PillColor  // Vodorovne: prava pulka, Svisle: horni pulka
 )
 
+data class SavedGameState(
+    val level: Int,
+    val score: Int,
+    val pillsThrown: Int,
+    val speed: SpeedLevel,
+    val music: MusicTrack,
+    val nextColorA: PillColor,
+    val nextColorB: PillColor,
+    val activeCapsule: ActiveCapsule?,
+    val board: Array<Array<GridCell>>
+)
+
 @Composable
 fun App() {
     MaterialTheme {
         var screenMode by remember { mutableStateOf(ScreenMode.MENU) }
-        var selectedLevel by remember { mutableIntStateOf(0) }
-        var selectedSpeed by remember { mutableStateOf(SpeedLevel.MED) }
-        var selectedMusic by remember { mutableStateOf(MusicTrack.FEVER) }
-        var soundMuted by remember { mutableStateOf(false) }
-        var topScore by remember { mutableIntStateOf(10000) }
+        var selectedLevel by remember { mutableIntStateOf(GameStorage.loadLastLevel()) }
+        var selectedSpeed by remember {
+            mutableStateOf(
+                SpeedLevel.entries.find { it.name == GameStorage.loadLastSpeedName() } ?: SpeedLevel.MED
+            )
+        }
+        var selectedMusic by remember {
+            mutableStateOf(
+                MusicTrack.entries.find { it.name == GameStorage.loadLastMusicName() } ?: MusicTrack.FEVER
+            )
+        }
+        var soundMuted by remember {
+            val muted = GameStorage.loadMuted()
+            SoundEngine.soundEnabled = !muted
+            mutableStateOf(muted)
+        }
+        var topScore by remember { mutableIntStateOf(GameStorage.loadTopScore()) }
+        var savedGame by remember { mutableStateOf(deserializeSavedGame(GameStorage.loadGameData())) }
+        var resumeFromSaved by remember { mutableStateOf(false) }
 
         DisposableEffect(Unit) {
             onDispose {
@@ -148,16 +174,21 @@ fun App() {
                             music = selectedMusic,
                             soundMuted = soundMuted,
                             topScore = topScore,
+                            savedGame = savedGame,
                             onLevelChange = { newLvl ->
-                                selectedLevel = newLvl.coerceIn(0, 20)
+                                val clamped = newLvl.coerceIn(0, 20)
+                                selectedLevel = clamped
+                                GameStorage.saveLastLevel(clamped)
                                 SoundEngine.playSfx(SfxType.MOVE)
                             },
                             onSpeedChange = { newSpd ->
                                 selectedSpeed = newSpd
+                                GameStorage.saveLastSpeedName(newSpd.name)
                                 SoundEngine.playSfx(SfxType.ROTATE)
                             },
                             onMusicChange = { newMus ->
                                 selectedMusic = newMus
+                                GameStorage.saveLastMusicName(newMus.name)
                                 SoundEngine.playSfx(SfxType.ROTATE)
                                 if (!soundMuted && newMus != MusicTrack.OFF) {
                                     SoundEngine.startMusic(newMus)
@@ -166,15 +197,32 @@ fun App() {
                                 }
                             },
                             onToggleMute = {
-                                soundMuted = !soundMuted
-                                SoundEngine.soundEnabled = !soundMuted
-                                if (soundMuted) {
+                                val nextMuted = !soundMuted
+                                soundMuted = nextMuted
+                                SoundEngine.soundEnabled = !nextMuted
+                                GameStorage.saveMuted(nextMuted)
+                                if (nextMuted) {
                                     SoundEngine.stopMusic()
                                 } else if (selectedMusic != MusicTrack.OFF) {
                                     SoundEngine.startMusic(selectedMusic)
                                 }
                             },
-                            onStartGame = {
+                            onContinueGame = {
+                                val existing = savedGame
+                                if (existing != null) {
+                                    selectedLevel = existing.level
+                                    selectedSpeed = existing.speed
+                                    selectedMusic = existing.music
+                                    SoundEngine.soundEnabled = !soundMuted
+                                    SoundEngine.playSfx(SfxType.CLEAR)
+                                    resumeFromSaved = true
+                                    screenMode = ScreenMode.PLAYING
+                                }
+                            },
+                            onStartNewGame = {
+                                GameStorage.clearSavedGame()
+                                savedGame = null
+                                resumeFromSaved = false
                                 SoundEngine.soundEnabled = !soundMuted
                                 SoundEngine.playSfx(SfxType.CLEAR)
                                 screenMode = ScreenMode.PLAYING
@@ -189,11 +237,29 @@ fun App() {
                             music = selectedMusic,
                             soundMuted = soundMuted,
                             topScore = topScore,
-                            onUpdateTopScore = { if (it > topScore) topScore = it },
+                            initialSavedState = if (resumeFromSaved) savedGame else null,
+                            onUpdateTopScore = { newScore ->
+                                if (newScore > topScore) {
+                                    topScore = newScore
+                                    GameStorage.saveTopScore(newScore)
+                                }
+                            },
+                            onSaveGameState = { stateToSave ->
+                                if (stateToSave == null) {
+                                    GameStorage.clearSavedGame()
+                                    savedGame = null
+                                } else {
+                                    val encoded = serializeSavedGame(stateToSave)
+                                    GameStorage.saveGameData(encoded)
+                                    savedGame = stateToSave
+                                }
+                            },
                             onToggleMute = {
-                                soundMuted = !soundMuted
-                                SoundEngine.soundEnabled = !soundMuted
-                                if (soundMuted) {
+                                val nextMuted = !soundMuted
+                                soundMuted = nextMuted
+                                SoundEngine.soundEnabled = !nextMuted
+                                GameStorage.saveMuted(nextMuted)
+                                if (nextMuted) {
                                     SoundEngine.stopMusic()
                                 } else if (selectedMusic != MusicTrack.OFF) {
                                     SoundEngine.startMusic(selectedMusic)
@@ -201,6 +267,7 @@ fun App() {
                             },
                             onBackToMenu = {
                                 SoundEngine.stopMusic()
+                                savedGame = deserializeSavedGame(GameStorage.loadGameData())
                                 screenMode = ScreenMode.MENU
                             }
                         )
@@ -218,11 +285,13 @@ private fun RetroMenuScreen(
     music: MusicTrack,
     soundMuted: Boolean,
     topScore: Int,
+    savedGame: SavedGameState?,
     onLevelChange: (Int) -> Unit,
     onSpeedChange: (SpeedLevel) -> Unit,
     onMusicChange: (MusicTrack) -> Unit,
     onToggleMute: () -> Unit,
-    onStartGame: () -> Unit
+    onContinueGame: () -> Unit,
+    onStartNewGame: () -> Unit
 ) {
     var animFrame by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
@@ -235,7 +304,7 @@ private fun RetroMenuScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
@@ -246,7 +315,7 @@ private fun RetroMenuScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "TOP ${topScore.toString().padStart(7, '0')}",
+                text = "REKORD ${topScore.toString().padStart(7, '0')}",
                 color = Color(0xFFFACC15),
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
@@ -277,7 +346,7 @@ private fun RetroMenuScreen(
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF0F172A))
                 .border(3.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
-                .padding(vertical = 12.dp, horizontal = 10.dp),
+                .padding(vertical = 10.dp, horizontal = 10.dp),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -286,36 +355,38 @@ private fun RetroMenuScreen(
                     color = Color(0xFFEF4444),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 28.sp,
+                    fontSize = 27.sp,
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    text = "8-BIT RETRO VIRUS BUSTER",
+                    text = "8-BITOVÝ LIKVIDÁTOR VIRŮ",
                     color = Color(0xFF93C5FD),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(10.dp))
-                Canvas(modifier = Modifier.size(width = 220.dp, height = 52.dp)) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Canvas(modifier = Modifier.size(width = 220.dp, height = 48.dp)) {
                     val cell = size.height * 0.72f
                     val yOff = (size.height - cell) / 2f
-                    drawPixelVirus(Offset(size.width * 0.08f, yOff), cell, PillColor.RED, animFrame)
-                    drawPixelVirus(Offset(size.width * 0.31f, yOff), cell, PillColor.YELLOW, animFrame)
-                    drawPixelVirus(Offset(size.width * 0.54f, yOff), cell, PillColor.BLUE, animFrame)
+                    drawPixelVirus(Offset(size.width * 0.08f, yOff), cell, cell, PillColor.RED, animFrame)
+                    drawPixelVirus(Offset(size.width * 0.31f, yOff), cell, cell, PillColor.YELLOW, animFrame)
+                    drawPixelVirus(Offset(size.width * 0.54f, yOff), cell, cell, PillColor.BLUE, animFrame)
                     // Spojena dvoubarevna kapsle vpravo
                     val pillCell = cell * 0.82f
                     val pillY = (size.height - pillCell) / 2f
                     drawCapsuleHalf(
                         topLeft = Offset(size.width * 0.75f, pillY),
-                        cellSize = pillCell,
+                        cellW = pillCell,
+                        cellH = pillCell,
                         color = PillColor.RED,
                         kind = CellKind.LEFT
                     )
                     drawCapsuleHalf(
                         topLeft = Offset(size.width * 0.75f + pillCell, pillY),
-                        cellSize = pillCell,
+                        cellW = pillCell,
+                        cellH = pillCell,
                         color = PillColor.BLUE,
                         kind = CellKind.RIGHT
                     )
@@ -330,23 +401,23 @@ private fun RetroMenuScreen(
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF0F172A))
                 .border(2.dp, Color(0xFF3B82F6), RoundedCornerShape(12.dp))
-                .padding(horizontal = 12.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 1. VIRUS LEVEL (00 - 20) - vsech 5 prvku zarovnanych uvnitr radku
+            // 1. ÚROVEŇ VIRŮ (00 - 20)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "VIRUS LEVEL (${(level + 1) * 4} VIRU)",
+                    text = "ÚROVEŇ VIRŮ (${(level + 1) * 4} VIRŮ)",
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -360,7 +431,7 @@ private fun RetroMenuScreen(
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF070A14))
                             .border(2.dp, Color(0xFFE2E8F0), RoundedCornerShape(6.dp))
-                            .padding(vertical = 7.dp),
+                            .padding(vertical = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -376,23 +447,23 @@ private fun RetroMenuScreen(
                 }
             }
 
-            // 2. SPEED (LOW / MED / HI)
+            // 2. RYCHLOST PÁDU (POMALÁ / STŘEDNÍ / RYCHLÁ)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "SPEED (RYCHLOST PADU)",
+                    text = "RYCHLOST PÁDU",
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     SpeedLevel.entries.forEach { item ->
                         val selected = item == speed
@@ -407,7 +478,7 @@ private fun RetroMenuScreen(
                                     shape = RoundedCornerShape(8.dp)
                                 )
                                 .clickable { onSpeedChange(item) }
-                                .padding(vertical = 10.dp),
+                                .padding(vertical = 9.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -415,30 +486,30 @@ private fun RetroMenuScreen(
                                 color = Color.White,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp
+                                fontSize = 13.sp
                             )
                         }
                     }
                 }
             }
 
-            // 3. MUSIC TYPE (FEVER / CHILL / OFF)
+            // 3. DOPROVODNÁ HUDBA (FEVER / CHILL / VYP)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "MUSIC TYPE (8-BIT HUDBA)",
+                    text = "DOPROVODNÁ 8-BIT HUDBA",
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     MusicTrack.entries.forEach { track ->
                         val selected = track == music
@@ -453,7 +524,7 @@ private fun RetroMenuScreen(
                                     shape = RoundedCornerShape(8.dp)
                                 )
                                 .clickable { onMusicChange(track) }
-                                .padding(vertical = 10.dp),
+                                .padding(vertical = 9.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -461,7 +532,7 @@ private fun RetroMenuScreen(
                                 color = Color.White,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp
+                                fontSize = 14.sp
                             )
                         }
                     }
@@ -469,25 +540,52 @@ private fun RetroMenuScreen(
             }
         }
 
-        // Tlacitko START (vycentrovane, na jeden radek)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color(0xFF22C55E))
-                .border(3.dp, Color.White, RoundedCornerShape(10.dp))
-                .clickable { onStartGame() }
-                .padding(vertical = 14.dp, horizontal = 12.dp),
-            contentAlignment = Alignment.Center
+        // Spodni tlacitka: POKRAČOVAT VE HŘE (pokud existuje ulozena hra) + NOVÁ HRA
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "START HRY",
-                color = Color(0xFF052E16),
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 20.sp,
-                textAlign = TextAlign.Center
-            )
+            if (savedGame != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF3B82F6))
+                        .border(3.dp, Color(0xFFFDE047), RoundedCornerShape(10.dp))
+                        .clickable { onContinueGame() }
+                        .padding(vertical = 11.dp, horizontal = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "POKRAČOVAT (ÚR. ${savedGame.level.toString().padStart(2, '0')} • ${savedGame.score} B.)",
+                        color = Color.White,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF22C55E))
+                    .border(3.dp, Color.White, RoundedCornerShape(10.dp))
+                    .clickable { onStartNewGame() }
+                    .padding(vertical = 12.dp, horizontal = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "NOVÁ HRA",
+                    color = Color(0xFF052E16),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 19.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
     }
 }
@@ -496,7 +594,7 @@ private fun RetroMenuScreen(
 private fun RetroStepButton(label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(42.dp)
+            .size(40.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF1E293B))
             .border(2.dp, Color(0xFF94A3B8), RoundedCornerShape(8.dp))
@@ -520,20 +618,24 @@ private fun DrPilulkaGameScreen(
     music: MusicTrack,
     soundMuted: Boolean,
     topScore: Int,
+    initialSavedState: SavedGameState?,
     onUpdateTopScore: (Int) -> Unit,
+    onSaveGameState: (SavedGameState?) -> Unit,
     onToggleMute: () -> Unit,
     onBackToMenu: () -> Unit
 ) {
-    var currentLevel by remember { mutableIntStateOf(initialLevel) }
-    var score by remember { mutableIntStateOf(0) }
-    var pillsThrown by remember { mutableIntStateOf(0) }
+    var currentLevel by remember { mutableIntStateOf(initialSavedState?.level ?: initialLevel) }
+    var score by remember { mutableIntStateOf(initialSavedState?.score ?: 0) }
+    var pillsThrown by remember { mutableIntStateOf(initialSavedState?.pillsThrown ?: 0) }
     var chainCounter by remember { mutableIntStateOf(0) }
     var phase by remember { mutableStateOf(PlayPhase.FALLING) }
 
-    var board by remember { mutableStateOf(generateBottleWithViruses(initialLevel)) }
-    var activeCapsule by remember { mutableStateOf<ActiveCapsule?>(null) }
-    var nextColorA by remember { mutableStateOf(randomPillColor()) }
-    var nextColorB by remember { mutableStateOf(randomPillColor()) }
+    var board by remember {
+        mutableStateOf(initialSavedState?.board ?: generateBottleWithViruses(initialLevel))
+    }
+    var activeCapsule by remember { mutableStateOf(initialSavedState?.activeCapsule) }
+    var nextColorA by remember { mutableStateOf(initialSavedState?.nextColorA ?: randomPillColor()) }
+    var nextColorB by remember { mutableStateOf(initialSavedState?.nextColorB ?: randomPillColor()) }
     var docThrowTick by remember { mutableIntStateOf(0) }
     var spriteFrame by remember { mutableIntStateOf(0) }
 
@@ -545,29 +647,68 @@ private fun DrPilulkaGameScreen(
     val blueViruses = remember(board) { countViruses(board, PillColor.BLUE) }
     val totalViruses = redViruses + yellowViruses + blueViruses
 
+    fun persistCurrentState(
+        targetBoard: Array<Array<GridCell>> = board,
+        targetActive: ActiveCapsule? = activeCapsule,
+        targetLevel: Int = currentLevel,
+        targetScore: Int = score,
+        targetPills: Int = pillsThrown,
+        targetNextA: PillColor = nextColorA,
+        targetNextB: PillColor = nextColorB
+    ) {
+        if (countAllViruses(targetBoard) <= 0) return
+        onSaveGameState(
+            SavedGameState(
+                level = targetLevel,
+                score = targetScore,
+                pillsThrown = targetPills,
+                speed = speed,
+                music = music,
+                nextColorA = targetNextA,
+                nextColorB = targetNextB,
+                activeCapsule = targetActive,
+                board = copyGrid(targetBoard)
+            )
+        )
+    }
+
     fun spawnNextCapsule(currentBoard: Array<Array<GridCell>>) {
         val spawnLeft = currentBoard[0][3].kind != CellKind.EMPTY
         val spawnRight = currentBoard[0][4].kind != CellKind.EMPTY
         if (spawnLeft || spawnRight) {
             activeCapsule = null
             phase = PlayPhase.GAME_OVER
+            onSaveGameState(null)
             SoundEngine.stopMusic()
             SoundEngine.playSfx(SfxType.GAME_OVER)
             return
         }
-        activeCapsule = ActiveCapsule(
+        val spawned = ActiveCapsule(
             x = 3,
             y = 0,
             isVertical = false,
             colorA = nextColorA,
             colorB = nextColorB
         )
-        nextColorA = randomPillColor()
-        nextColorB = randomPillColor()
-        pillsThrown += 1
+        val upcomingA = randomPillColor()
+        val upcomingB = randomPillColor()
+        val nextPillsCount = pillsThrown + 1
+
+        activeCapsule = spawned
+        nextColorA = upcomingA
+        nextColorB = upcomingB
+        pillsThrown = nextPillsCount
         chainCounter = 0
         docThrowTick = 2
         phase = PlayPhase.FALLING
+
+        persistCurrentState(
+            targetBoard = currentBoard,
+            targetActive = spawned,
+            targetPills = nextPillsCount,
+            targetNextA = upcomingA,
+            targetNextB = upcomingB
+        )
     }
 
     fun startStage(lvl: Int) {
@@ -583,10 +724,21 @@ private fun DrPilulkaGameScreen(
         }
     }
 
-    // Spusteni prvniho levelu
+    // Spusteni hry (obnoveni ulozene hry nebo start noveho levelu)
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
-        startStage(currentLevel)
+        if (initialSavedState != null && countAllViruses(initialSavedState.board) > 0) {
+            if (initialSavedState.activeCapsule == null) {
+                spawnNextCapsule(initialSavedState.board)
+            } else {
+                phase = PlayPhase.FALLING
+            }
+            if (!soundMuted && music != MusicTrack.OFF) {
+                SoundEngine.startMusic(music)
+            }
+        } else {
+            startStage(currentLevel)
+        }
     }
 
     // Animace tanecniho kroku viru v lahvi a pod lupou
@@ -619,8 +771,10 @@ private fun DrPilulkaGameScreen(
         if (phase != PlayPhase.FALLING) return
         val cap = activeCapsule ?: return
         if (canPlace(board, cap.x + dx, cap.y, cap.isVertical)) {
-            activeCapsule = cap.copy(x = cap.x + dx)
+            val updated = cap.copy(x = cap.x + dx)
+            activeCapsule = updated
             SoundEngine.playSfx(SfxType.MOVE)
+            persistCurrentState(targetActive = updated)
         }
     }
 
@@ -632,39 +786,47 @@ private fun DrPilulkaGameScreen(
             val newColorA = if (clockwise) cap.colorB else cap.colorA
             val newColorB = if (clockwise) cap.colorA else cap.colorB
             if (canPlace(board, cap.x, cap.y, isVert = true)) {
-                activeCapsule = cap.copy(
+                val updated = cap.copy(
                     isVertical = true,
                     colorA = newColorA,
                     colorB = newColorB
                 )
+                activeCapsule = updated
                 SoundEngine.playSfx(SfxType.ROTATE)
+                persistCurrentState(targetActive = updated)
             } else if (cap.y + 1 < GRID_ROWS && canPlace(board, cap.x, cap.y + 1, isVert = true)) {
-                activeCapsule = cap.copy(
+                val updated = cap.copy(
                     y = cap.y + 1,
                     isVertical = true,
                     colorA = newColorA,
                     colorB = newColorB
                 )
+                activeCapsule = updated
                 SoundEngine.playSfx(SfxType.ROTATE)
+                persistCurrentState(targetActive = updated)
             }
         } else {
             val newColorA = if (clockwise) cap.colorA else cap.colorB
             val newColorB = if (clockwise) cap.colorB else cap.colorA
             if (canPlace(board, cap.x, cap.y, isVert = false)) {
-                activeCapsule = cap.copy(
+                val updated = cap.copy(
                     isVertical = false,
                     colorA = newColorA,
                     colorB = newColorB
                 )
+                activeCapsule = updated
                 SoundEngine.playSfx(SfxType.ROTATE)
+                persistCurrentState(targetActive = updated)
             } else if (canPlace(board, cap.x - 1, cap.y, isVert = false)) {
-                activeCapsule = cap.copy(
+                val updated = cap.copy(
                     x = cap.x - 1,
                     isVertical = false,
                     colorA = newColorA,
                     colorB = newColorB
                 )
+                activeCapsule = updated
                 SoundEngine.playSfx(SfxType.ROTATE)
+                persistCurrentState(targetActive = updated)
             }
         }
     }
@@ -695,8 +857,9 @@ private fun DrPilulkaGameScreen(
         board = matchResult.grid
         if (matchResult.matchedAny) {
             chainCounter += 1
-            score += matchResult.pointsEarned
-            onUpdateTopScore(score)
+            val newScore = score + matchResult.pointsEarned
+            score = newScore
+            onUpdateTopScore(newScore)
             when {
                 chainCounter >= 2 -> SoundEngine.playSfx(SfxType.COMBO)
                 matchResult.virusesKilled > 0 -> SoundEngine.playSfx(SfxType.VIRUS_KILL)
@@ -712,7 +875,9 @@ private fun DrPilulkaGameScreen(
         if (phase != PlayPhase.FALLING) return false
         val cap = activeCapsule ?: return false
         return if (canPlace(board, cap.x, cap.y + 1, cap.isVertical)) {
-            activeCapsule = cap.copy(y = cap.y + 1)
+            val updated = cap.copy(y = cap.y + 1)
+            activeCapsule = updated
+            persistCurrentState(targetActive = updated)
             true
         } else {
             lockAndEvaluate(cap)
@@ -730,7 +895,7 @@ private fun DrPilulkaGameScreen(
         lockAndEvaluate(cap)
     }
 
-    // Hlavni herní smycka (pohodovy pad pilulky, animace zmizeni a kompletni kaskadova gravitace)
+    // Hlavni herni smycka (pohodovy pad pilulky, animace zmizeni a kompletni kaskadova gravitace)
     LaunchedEffect(phase, speed) {
         when (phase) {
             PlayPhase.FALLING -> {
@@ -763,13 +928,13 @@ private fun DrPilulkaGameScreen(
                     val gravStep = applySingleGravityStep(board)
                     board = gravStep.grid
                     if (!gravStep.movedAny) {
-                        // Vsechny uvolnene pulky pilulek dopadly -> kontrola kaskadoveho komba
                         val matchResult = markMatchesForClearing(gravStep.grid, speed, chainCounter)
                         board = matchResult.grid
                         if (matchResult.matchedAny) {
                             chainCounter += 1
-                            score += matchResult.pointsEarned
-                            onUpdateTopScore(score)
+                            val newScore = score + matchResult.pointsEarned
+                            score = newScore
+                            onUpdateTopScore(newScore)
                             if (chainCounter >= 2) {
                                 SoundEngine.playSfx(SfxType.COMBO)
                             } else if (matchResult.virusesKilled > 0) {
@@ -827,23 +992,23 @@ private fun DrPilulkaGameScreen(
                     false
                 }
             }
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 6.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // 1. HORNÍ LIŠTA: Skóre + ovládání zvuku/pauzy/menu
+        // 1. HORNÍ LIŠTA: Rekord, Skóre + ovládání zvuku/pauzy/menu
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color(0xFF0F172A))
                 .border(2.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "TOP ${topScore.toString().padStart(7, '0')}",
+                    text = "REKORD ${topScore.toString().padStart(7, '0')}",
                     color = Color(0xFF94A3B8),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
@@ -851,7 +1016,7 @@ private fun DrPilulkaGameScreen(
                     maxLines = 1
                 )
                 Text(
-                    text = "SCORE ${score.toString().padStart(7, '0')}",
+                    text = "SKÓRE  ${score.toString().padStart(7, '0')}",
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
@@ -860,7 +1025,7 @@ private fun DrPilulkaGameScreen(
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 MiniHeaderButton(
                     label = if (phase == PlayPhase.PAUSED) "HRA" else "PAUZA",
                     color = Color(0xFF3B82F6)
@@ -876,7 +1041,7 @@ private fun DrPilulkaGameScreen(
                     }
                 }
                 MiniHeaderButton(
-                    label = if (soundMuted) "MUTE" else "ZVUK",
+                    label = if (soundMuted) "NĚMÝ" else "ZVUK",
                     color = if (soundMuted) Color(0xFFEF4444) else Color(0xFF22C55E)
                 ) {
                     onToggleMute()
@@ -890,7 +1055,7 @@ private fun DrPilulkaGameScreen(
             }
         }
 
-        // 2. HLAVNÍ STŘEDNÍ ČÁST: Vlevo Lupa s viry, uprostřed Láhev 8x16, vpravo Doktor + statistiky
+        // 2. HLAVNÍ STŘEDNÍ ČÁST: Zúžené boční panely (0.19f) a rozšířená láhev uprostřed (0.62f)
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -900,30 +1065,29 @@ private fun DrPilulkaGameScreen(
         ) {
             Row(
                 modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // LEVÝ PANEL: Lupa se 3 tančícími viry + počítadlo virů podle barev
+                // LEVÝ KOMPAKTNÍ PANEL (19 % šířky): Lupa se 3 tančícími viry + počítadlo virů
                 Column(
                     modifier = Modifier
-                        .weight(0.27f)
+                        .weight(0.19f)
                         .fillMaxHeight(),
                     verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Lupa s tančícími viry
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .aspectRatio(0.85f)
-                            .clip(RoundedCornerShape(10.dp))
+                            .aspectRatio(0.95f)
+                            .clip(RoundedCornerShape(8.dp))
                             .background(Color(0xFF0F172A))
-                            .border(2.dp, Color(0xFF3B82F6), RoundedCornerShape(10.dp))
-                            .padding(4.dp),
+                            .border(2.dp, Color(0xFF3B82F6), RoundedCornerShape(8.dp))
+                            .padding(3.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Canvas(modifier = Modifier.fillMaxSize()) {
-                            val radius = size.minDimension * 0.45f
+                            val radius = size.minDimension * 0.46f
                             val center = Offset(size.width / 2f, size.height / 2f)
                             drawCircle(
                                 color = Color(0xFF050811),
@@ -934,14 +1098,15 @@ private fun DrPilulkaGameScreen(
                                 color = Color(0xFF93C5FD),
                                 radius = radius,
                                 center = center,
-                                style = Stroke(width = 4f)
+                                style = Stroke(width = 3f)
                             )
 
                             val vSize = radius * 0.62f
                             if (redViruses > 0) {
                                 drawPixelVirus(
                                     topLeft = Offset(center.x - vSize / 2f, center.y - radius * 0.68f),
-                                    cellSize = vSize,
+                                    cellW = vSize,
+                                    cellH = vSize,
                                     color = PillColor.RED,
                                     frame = spriteFrame
                                 )
@@ -949,7 +1114,8 @@ private fun DrPilulkaGameScreen(
                             if (yellowViruses > 0) {
                                 drawPixelVirus(
                                     topLeft = Offset(center.x - radius * 0.68f, center.y + radius * 0.02f),
-                                    cellSize = vSize,
+                                    cellW = vSize,
+                                    cellH = vSize,
                                     color = PillColor.YELLOW,
                                     frame = (spriteFrame + 1) % 2
                                 )
@@ -957,7 +1123,8 @@ private fun DrPilulkaGameScreen(
                             if (blueViruses > 0) {
                                 drawPixelVirus(
                                     topLeft = Offset(center.x + radius * 0.08f, center.y + radius * 0.02f),
-                                    cellSize = vSize,
+                                    cellW = vSize,
+                                    cellH = vSize,
                                     color = PillColor.BLUE,
                                     frame = spriteFrame
                                 )
@@ -972,57 +1139,58 @@ private fun DrPilulkaGameScreen(
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color(0xFF0F172A))
                             .border(2.dp, Color(0xFF475569), RoundedCornerShape(8.dp))
-                            .padding(6.dp),
+                            .padding(horizontal = 4.dp, vertical = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
                         Text(
-                            text = "VIRUS",
+                            text = "VIRY",
                             color = Color(0xFFFACC15),
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
+                            fontSize = 10.sp
                         )
                         Text(
                             text = totalViruses.toString().padStart(2, '0'),
                             color = Color.White,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 20.sp
+                            fontSize = 18.sp
                         )
-                        VirusColorCounterRow("R", PillColor.RED.mainHex, redViruses)
-                        VirusColorCounterRow("Y", PillColor.YELLOW.mainHex, yellowViruses)
-                        VirusColorCounterRow("B", PillColor.BLUE.mainHex, blueViruses)
+                        VirusColorCounterRow("Č", PillColor.RED.mainHex, redViruses)
+                        VirusColorCounterRow("Ž", PillColor.YELLOW.mainHex, yellowViruses)
+                        VirusColorCounterRow("M", PillColor.BLUE.mainHex, blueViruses)
                     }
                 }
 
-                // STŘEDNÍ PANEL: Lékařská láhev 8 × 16 s hrdlem
+                // STŘEDNÍ ŠIROKÝ PANEL (62 % šířky): Lékařská láhev 8 × 16
                 Box(
                     modifier = Modifier
-                        .weight(0.46f)
+                        .weight(0.62f)
                         .fillMaxHeight(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .aspectRatio(8f / 17.6f)
-                    ) {
-                        val neckUnits = 1.4f
-                        val cellW = size.width / (GRID_COLS + 0.6f)
-                        val cellH = size.height / (GRID_ROWS + neckUnits + 0.4f)
-                        val cell = minOf(cellW, cellH)
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val neckUnits = 1.25f
+                        val maxCellW = size.width / (GRID_COLS + 0.35f)
+                        val maxCellH = size.height / (GRID_ROWS + neckUnits + 0.35f)
 
-                        val gridWidth = cell * GRID_COLS
-                        val gridHeight = cell * GRID_ROWS
+                        // Umožníme lahvi využít větší šířku (buňky mohou být mírně širší jako na CRT TV)
+                        val cellH = minOf(maxCellH, maxCellW * 1.05f)
+                        val cellW = minOf(maxCellW, cellH * 1.22f)
+
+                        val gridWidth = cellW * GRID_COLS
+                        val gridHeight = cellH * GRID_ROWS
                         val gridLeft = (size.width - gridWidth) / 2f
-                        val gridTop = cell * neckUnits
+                        val totalBottleH = gridHeight + cellH * neckUnits
+                        val bottleTopOffset = (size.height - totalBottleH) / 2f
+                        val gridTop = bottleTopOffset + cellH * neckUnits
 
                         // Hrdlo lahve nahoře (otevřené nad sloupci 3 a 4)
-                        val neckLeft = gridLeft + cell * 2.5f
-                        val neckRight = gridLeft + cell * 5.5f
-                        val rimTop = cell * 0.2f
-                        val neckTop = cell * 0.55f
+                        val neckLeft = gridLeft + cellW * 2.5f
+                        val neckRight = gridLeft + cellW * 5.5f
+                        val rimTop = bottleTopOffset + cellH * 0.15f
+                        val neckTop = bottleTopOffset + cellH * 0.50f
 
                         // Vnitřní tmavé pozadí lahve
                         drawRoundRect(
@@ -1034,7 +1202,7 @@ private fun DrPilulkaGameScreen(
 
                         // Jemná pixelová mřížka uvnitř lahve
                         for (r in 0..GRID_ROWS) {
-                            val y = gridTop + r * cell
+                            val y = gridTop + r * cellH
                             drawLine(
                                 color = Color(0xFF111827),
                                 start = Offset(gridLeft, y),
@@ -1043,7 +1211,7 @@ private fun DrPilulkaGameScreen(
                             )
                         }
                         for (c in 0..GRID_COLS) {
-                            val x = gridLeft + c * cell
+                            val x = gridLeft + c * cellW
                             drawLine(
                                 color = Color(0xFF111827),
                                 start = Offset(x, gridTop),
@@ -1055,13 +1223,11 @@ private fun DrPilulkaGameScreen(
                         // Stěny hrdla a prstenec lahve
                         val bottleWallColor = Color(0xFFE2E8F0)
                         val wallStroke = 5f
-                        // Horní okraj hrdla
                         drawRect(
                             color = bottleWallColor,
-                            topLeft = Offset(neckLeft - cell * 0.25f, rimTop),
-                            size = Size((neckRight - neckLeft) + cell * 0.5f, neckTop - rimTop)
+                            topLeft = Offset(neckLeft - cellW * 0.25f, rimTop),
+                            size = Size((neckRight - neckLeft) + cellW * 0.5f, neckTop - rimTop)
                         )
-                        // Svislé stěny hrdla
                         drawLine(
                             color = bottleWallColor,
                             start = Offset(neckLeft, neckTop),
@@ -1074,7 +1240,6 @@ private fun DrPilulkaGameScreen(
                             end = Offset(neckRight, gridTop),
                             strokeWidth = wallStroke
                         )
-                        // Ramena lahve
                         drawLine(
                             color = bottleWallColor,
                             start = Offset(gridLeft - 3f, gridTop),
@@ -1087,7 +1252,6 @@ private fun DrPilulkaGameScreen(
                             end = Offset(gridLeft + gridWidth + 3f, gridTop),
                             strokeWidth = wallStroke
                         )
-                        // Boční a spodní stěna lahve
                         drawLine(
                             color = bottleWallColor,
                             start = Offset(gridLeft - 3f, gridTop),
@@ -1112,93 +1276,89 @@ private fun DrPilulkaGameScreen(
                             for (c in 0 until GRID_COLS) {
                                 val cellItem = board[r][c]
                                 val cColor = cellItem.color ?: continue
-                                val topLeft = Offset(gridLeft + c * cell, gridTop + r * cell)
+                                val topLeft = Offset(gridLeft + c * cellW, gridTop + r * cellH)
                                 when (cellItem.kind) {
                                     CellKind.EMPTY -> Unit
-                                    CellKind.VIRUS -> drawPixelVirus(topLeft, cell, cColor, spriteFrame)
-                                    CellKind.CLEARING -> drawClearingPop(topLeft, cell, cColor)
-                                    else -> drawCapsuleHalf(topLeft, cell, cColor, cellItem.kind)
+                                    CellKind.VIRUS -> drawPixelVirus(topLeft, cellW, cellH, cColor, spriteFrame)
+                                    CellKind.CLEARING -> drawClearingPop(topLeft, cellW, cellH, cColor)
+                                    else -> drawCapsuleHalf(topLeft, cellW, cellH, cColor, cellItem.kind)
                                 }
                             }
                         }
 
                         // Vykreslení právě padající kapsle
                         activeCapsule?.let { cap ->
-                            val pos1 = Offset(gridLeft + cap.x * cell, gridTop + cap.y * cell)
+                            val pos1 = Offset(gridLeft + cap.x * cellW, gridTop + cap.y * cellH)
                             if (cap.isVertical) {
-                                drawCapsuleHalf(pos1, cell, cap.colorA, CellKind.BOTTOM)
+                                drawCapsuleHalf(pos1, cellW, cellH, cap.colorA, CellKind.BOTTOM)
                                 if (cap.y - 1 >= 0) {
-                                    val pos2 = Offset(gridLeft + cap.x * cell, gridTop + (cap.y - 1) * cell)
-                                    drawCapsuleHalf(pos2, cell, cap.colorB, CellKind.TOP)
+                                    val pos2 = Offset(gridLeft + cap.x * cellW, gridTop + (cap.y - 1) * cellH)
+                                    drawCapsuleHalf(pos2, cellW, cellH, cap.colorB, CellKind.TOP)
                                 }
                             } else {
-                                drawCapsuleHalf(pos1, cell, cap.colorA, CellKind.LEFT)
-                                val pos2 = Offset(gridLeft + (cap.x + 1) * cell, gridTop + cap.y * cell)
-                                drawCapsuleHalf(pos2, cell, cap.colorB, CellKind.RIGHT)
+                                drawCapsuleHalf(pos1, cellW, cellH, cap.colorA, CellKind.LEFT)
+                                val pos2 = Offset(gridLeft + (cap.x + 1) * cellW, gridTop + cap.y * cellH)
+                                drawCapsuleHalf(pos2, cellW, cellH, cap.colorB, CellKind.RIGHT)
                             }
                         }
                     }
                 }
 
-                // PRAVÝ PANEL: Doktor s další kapslí (NEXT) + LEVEL + SPEED
+                // PRAVÝ KOMPAKTNÍ PANEL (19 % šířky): Doktor s další kapslí (DALŠÍ) + statistiky
                 Column(
                     modifier = Modifier
-                        .weight(0.27f)
+                        .weight(0.19f)
                         .fillMaxHeight(),
                     verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Box s doktorem a NEXT kapslí
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(Color(0xFF0F172A))
-                            .border(2.dp, Color(0xFFE2E8F0), RoundedCornerShape(10.dp))
-                            .padding(6.dp),
+                            .border(2.dp, Color(0xFFE2E8F0), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 4.dp, vertical = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "NEXT",
+                            text = "DALŠÍ",
                             color = Color(0xFFFACC15),
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
+                            fontSize = 10.sp
                         )
                         Spacer(modifier = Modifier.height(4.dp))
-                        // Náhled další pilulky
-                        Canvas(modifier = Modifier.size(width = 48.dp, height = 24.dp)) {
+                        Canvas(modifier = Modifier.size(width = 40.dp, height = 20.dp)) {
                             val half = size.height * 0.9f
                             val startX = (size.width - half * 2f) / 2f
-                            drawCapsuleHalf(Offset(startX, 0f), half, nextColorA, CellKind.LEFT)
-                            drawCapsuleHalf(Offset(startX + half, 0f), half, nextColorB, CellKind.RIGHT)
+                            drawCapsuleHalf(Offset(startX, 0f), half, half, nextColorA, CellKind.LEFT)
+                            drawCapsuleHalf(Offset(startX + half, 0f), half, half, nextColorB, CellKind.RIGHT)
                         }
                         Spacer(modifier = Modifier.height(6.dp))
-                        // Pixel-art postavička Dr. Pilulky v bílém plášti
-                        Canvas(modifier = Modifier.size(56.dp)) {
+                        Canvas(modifier = Modifier.size(44.dp)) {
                             drawPixelDoctor(throwing = docThrowTick > 0)
                         }
                     }
 
-                    // Informační tabulka LEVEL / SPEED / HUDBA
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color(0xFF0F172A))
                             .border(2.dp, Color(0xFF475569), RoundedCornerShape(8.dp))
-                            .padding(6.dp),
+                            .padding(horizontal = 4.dp, vertical = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        StatBadge("LEVEL", currentLevel.toString().padStart(2, '0'), Color(0xFF38BDF8))
-                        StatBadge("SPEED", speed.label, Color(0xFFF43F5E))
+                        StatBadge("ÚROVEŇ", currentLevel.toString().padStart(2, '0'), Color(0xFF38BDF8))
+                        StatBadge("RYCHLOST", speed.shortLabel, Color(0xFFF43F5E))
                         StatBadge("HUDBA", music.label, Color(0xFFA855F7))
                     }
                 }
             }
 
-            // Překryvné okno při VÍTĚZSTVÍ (STAGE CLEAR), PROHŘE (GAME OVER) nebo PAUZE
+            // Překryvné okno při VYČIŠTĚNÍ LAHVE, KONCI HRY nebo PAUZE
             if (phase == PlayPhase.STAGE_CLEAR || phase == PlayPhase.GAME_OVER || phase == PlayPhase.PAUSED) {
                 Box(
                     modifier = Modifier
@@ -1219,29 +1379,31 @@ private fun DrPilulkaGameScreen(
                         when (phase) {
                             PlayPhase.STAGE_CLEAR -> {
                                 Text(
-                                    text = "STAGE CLEAR!",
+                                    text = "LÁHEV VYČIŠTĚNA!",
                                     color = Color(0xFF4ADE80),
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 22.sp,
+                                    fontSize = 20.sp,
                                     textAlign = TextAlign.Center
                                 )
                                 Text(
-                                    text = "Vsechny viry v lahvi byly zlikvidovany!",
+                                    text = "Všechny viry v lahvi byly zlikvidovány!",
                                     color = Color(0xFFE2E8F0),
                                     fontFamily = FontFamily.Monospace,
                                     textAlign = TextAlign.Center,
                                     fontSize = 13.sp
                                 )
-                                OverlayActionButton("DALŠÍ LEVEL (${(currentLevel + 1).coerceAtMost(20)})", Color(0xFF22C55E)) {
-                                    currentLevel = (currentLevel + 1).coerceAtMost(20)
-                                    startStage(currentLevel)
+                                OverlayActionButton("DALŠÍ ÚROVEŇ (${(currentLevel + 1).coerceAtMost(20)})", Color(0xFF22C55E)) {
+                                    val nextLvl = (currentLevel + 1).coerceAtMost(20)
+                                    currentLevel = nextLvl
+                                    GameStorage.saveLastLevel(nextLvl)
+                                    startStage(nextLvl)
                                 }
                             }
 
                             PlayPhase.GAME_OVER -> {
                                 Text(
-                                    text = "GAME OVER",
+                                    text = "KONEC HRY",
                                     color = Color(0xFFEF4444),
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.ExtraBold,
@@ -1249,7 +1411,7 @@ private fun DrPilulkaGameScreen(
                                     textAlign = TextAlign.Center
                                 )
                                 Text(
-                                    text = "Hrdlo lahve se ucpalo!\nZustalo viru: $totalViruses",
+                                    text = "Hrdlo lahve se ucpalo!\nZbylo virů: $totalViruses",
                                     color = Color(0xFFE2E8F0),
                                     fontFamily = FontFamily.Monospace,
                                     textAlign = TextAlign.Center,
@@ -1300,7 +1462,6 @@ private fun DrPilulkaGameScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Vlevo: Směrový kříž + posun + rychlý pád
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -1313,7 +1474,6 @@ private fun DrPilulkaGameScreen(
                 DPadButton("▶", widthDp = 46) { moveHorizontal(1) }
             }
 
-            // Vpravo: Kulatá tlačítka přímo se symbolem směru otáčení (doleva ↺ a doprava ↻)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -1357,10 +1517,10 @@ private fun VirusColorCounterRow(label: String, color: Color, count: Int) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             Box(
                 modifier = Modifier
-                    .size(8.dp)
+                    .size(7.dp)
                     .clip(CircleShape)
                     .background(color)
             )
@@ -1369,7 +1529,7 @@ private fun VirusColorCounterRow(label: String, color: Color, count: Int) {
                 color = Color(0xFFCBD5E1),
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
-                fontSize = 11.sp
+                fontSize = 10.sp
             )
         }
         Text(
@@ -1377,7 +1537,7 @@ private fun VirusColorCounterRow(label: String, color: Color, count: Int) {
             color = Color.White,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
-            fontSize = 11.sp
+            fontSize = 10.sp
         )
     }
 }
@@ -1390,14 +1550,16 @@ private fun StatBadge(title: String, value: String, accent: Color) {
             color = Color(0xFF94A3B8),
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
-            fontSize = 10.sp
+            fontSize = 9.sp,
+            maxLines = 1
         )
         Text(
             text = value,
             color = accent,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.ExtraBold,
-            fontSize = 14.sp
+            fontSize = 13.sp,
+            maxLines = 1
         )
     }
 }
@@ -1482,11 +1644,11 @@ private fun ArcadeRoundButton(symbol: String, color: Color, onAction: () -> Unit
 
 private fun DrawScope.drawPixelVirus(
     topLeft: Offset,
-    cellSize: Float,
+    cellW: Float,
+    cellH: Float,
     color: PillColor,
     frame: Int
 ) {
-    // 8x8 pixelová matice klasického 8bitového viru (0=prázdno, 1=hlavní barva, 2=bílý obrys/oči, 3=zornička/pusa)
     val spriteFrame0 = arrayOf(
         intArrayOf(0, 1, 0, 0, 0, 0, 1, 0),
         intArrayOf(0, 0, 1, 1, 1, 1, 0, 0),
@@ -1509,7 +1671,8 @@ private fun DrawScope.drawPixelVirus(
     )
 
     val matrix = if (frame % 2 == 0) spriteFrame0 else spriteFrame1
-    val px = cellSize / 8f
+    val pxW = cellW / 8f
+    val pxH = cellH / 8f
 
     for (r in 0 until 8) {
         for (c in 0 until 8) {
@@ -1522,8 +1685,8 @@ private fun DrawScope.drawPixelVirus(
             }
             drawRect(
                 color = pColor,
-                topLeft = Offset(topLeft.x + c * px, topLeft.y + r * px),
-                size = Size(px + 0.5f, px + 0.5f)
+                topLeft = Offset(topLeft.x + c * pxW, topLeft.y + r * pxH),
+                size = Size(pxW + 0.5f, pxH + 0.5f)
             )
         }
     }
@@ -1531,19 +1694,21 @@ private fun DrawScope.drawPixelVirus(
 
 private fun DrawScope.drawCapsuleHalf(
     topLeft: Offset,
-    cellSize: Float,
+    cellW: Float,
+    cellH: Float,
     color: PillColor,
     kind: CellKind
 ) {
-    val pad = cellSize * 0.06f
-    val x = topLeft.x + pad
-    val y = topLeft.y + pad
-    val w = cellSize - pad * 2f
-    val h = cellSize - pad * 2f
-    val r = w * 0.46f
+    val padX = cellW * 0.06f
+    val padY = cellH * 0.06f
+    val x = topLeft.x + padX
+    val y = topLeft.y + padY
+    val w = cellW - padX * 2f
+    val h = cellH - padY * 2f
+    val r = minOf(w, h) * 0.46f
     val border = 1.6f
 
-    // 1. Vnější tmavý obrys (zaoblený základ + rovné napojení u spojené pilulky)
+    // 1. Vnější tmavý obrys
     drawRoundRect(
         color = color.darkHex,
         topLeft = Offset(x, y),
@@ -1555,7 +1720,7 @@ private fun DrawScope.drawCapsuleHalf(
             drawRect(
                 color = color.darkHex,
                 topLeft = Offset(x + w * 0.5f, y),
-                size = Size((topLeft.x + cellSize) - (x + w * 0.5f), h)
+                size = Size((topLeft.x + cellW) - (x + w * 0.5f), h)
             )
         }
         CellKind.RIGHT -> {
@@ -1569,7 +1734,7 @@ private fun DrawScope.drawCapsuleHalf(
             drawRect(
                 color = color.darkHex,
                 topLeft = Offset(x, y + h * 0.5f),
-                size = Size(w, (topLeft.y + cellSize) - (y + h * 0.5f))
+                size = Size(w, (topLeft.y + cellH) - (y + h * 0.5f))
             )
         }
         CellKind.BOTTOM -> {
@@ -1594,7 +1759,7 @@ private fun DrawScope.drawCapsuleHalf(
             drawRect(
                 color = color.mainHex,
                 topLeft = Offset(x + w * 0.5f, y + border),
-                size = Size((topLeft.x + cellSize - 1f) - (x + w * 0.5f), h - border * 2f)
+                size = Size((topLeft.x + cellW - 1f) - (x + w * 0.5f), h - border * 2f)
             )
         }
         CellKind.RIGHT -> {
@@ -1608,7 +1773,7 @@ private fun DrawScope.drawCapsuleHalf(
             drawRect(
                 color = color.mainHex,
                 topLeft = Offset(x + border, y + h * 0.5f),
-                size = Size(w - border * 2f, (topLeft.y + cellSize - 1f) - (y + h * 0.5f))
+                size = Size(w - border * 2f, (topLeft.y + cellH - 1f) - (y + h * 0.5f))
             )
         }
         CellKind.BOTTOM -> {
@@ -1632,41 +1797,133 @@ private fun DrawScope.drawCapsuleHalf(
 
 private fun DrawScope.drawClearingPop(
     topLeft: Offset,
-    cellSize: Float,
+    cellW: Float,
+    cellH: Float,
     color: PillColor
 ) {
-    val center = Offset(topLeft.x + cellSize / 2f, topLeft.y + cellSize / 2f)
+    val center = Offset(topLeft.x + cellW / 2f, topLeft.y + cellH / 2f)
+    val base = minOf(cellW, cellH)
     drawCircle(
         color = Color.White,
-        radius = cellSize * 0.42f,
+        radius = base * 0.42f,
         center = center,
         style = Stroke(width = 3f)
     )
     drawCircle(
         color = color.lightHex,
-        radius = cellSize * 0.22f,
+        radius = base * 0.22f,
         center = center
     )
 }
 
 private fun DrawScope.drawPixelDoctor(throwing: Boolean) {
-    // 8x8 zjednodušený pixel-art Dr. Pilulky (zrcátko na čele, obličej, bílý plášť)
     val px = size.minDimension / 8f
-    // Čelní lékařské zrcátko
     drawRect(Color(0xFF38BDF8), Offset(px * 3f, px * 0.5f), Size(px * 2f, px * 1.2f))
-    // Hlava a vlasy
     drawRect(Color(0xFF78350F), Offset(px * 2f, px * 1.2f), Size(px * 4f, px * 1.2f))
     drawRect(Color(0xFFFDE68A), Offset(px * 2f, px * 2.2f), Size(px * 4f, px * 2.2f))
-    // Oči a knír
     drawRect(Color(0xFF0F172A), Offset(px * 2.6f, px * 2.6f), Size(px * 0.7f, px * 0.7f))
     drawRect(Color(0xFF0F172A), Offset(px * 4.6f, px * 2.6f), Size(px * 0.7f, px * 0.7f))
     drawRect(Color(0xFF78350F), Offset(px * 2.5f, px * 3.6f), Size(px * 3f, px * 0.6f))
-    // Bílý lékařský plášť
     drawRect(Color.White, Offset(px * 1.5f, px * 4.4f), Size(px * 5f, px * 3.0f))
     drawRect(Color(0xFFEF4444), Offset(px * 3.6f, px * 4.6f), Size(px * 0.8f, px * 2.0f))
-    // Ruka házející kapsli
     val armY = if (throwing) px * 2.0f else px * 4.4f
     drawRect(Color.White, Offset(px * 0.4f, armY), Size(px * 1.2f, px * 1.8f))
+}
+
+// ============================================================================
+// SERIALIZACE A NAČÍTÁNÍ ROZEHRANÉ HRY
+// ============================================================================
+
+private fun serializeSavedGame(state: SavedGameState): String {
+    val capStr = state.activeCapsule?.let {
+        "${it.x},${it.y},${if (it.isVertical) 1 else 0},${it.colorA.name},${it.colorB.name}"
+    } ?: "NONE"
+
+    val cellsSb = StringBuilder()
+    for (r in 0 until GRID_ROWS) {
+        for (c in 0 until GRID_COLS) {
+            if (r > 0 || c > 0) cellsSb.append(';')
+            val cell = state.board[r][c]
+            val safeKind = if (cell.kind == CellKind.CLEARING) CellKind.EMPTY else cell.kind
+            val colorIdx = if (safeKind == CellKind.EMPTY) -1 else (cell.color?.ordinal ?: -1)
+            cellsSb.append(safeKind.ordinal).append(':').append(colorIdx)
+        }
+    }
+
+    return listOf(
+        "V1",
+        state.level.toString(),
+        state.score.toString(),
+        state.pillsThrown.toString(),
+        state.speed.name,
+        state.music.name,
+        state.nextColorA.name,
+        state.nextColorB.name,
+        capStr,
+        cellsSb.toString()
+    ).joinToString("|")
+}
+
+private fun deserializeSavedGame(raw: String?): SavedGameState? {
+    if (raw.isNullOrBlank()) return null
+    return try {
+        val parts = raw.split("|")
+        if (parts.size < 10 || parts[0] != "V1") return null
+
+        val level = parts[1].toInt().coerceIn(0, 20)
+        val score = parts[2].toInt().coerceAtLeast(0)
+        val pillsThrown = parts[3].toInt().coerceAtLeast(0)
+        val speed = SpeedLevel.entries.find { it.name == parts[4] } ?: SpeedLevel.MED
+        val music = MusicTrack.entries.find { it.name == parts[5] } ?: MusicTrack.FEVER
+        val nextA = PillColor.entries.find { it.name == parts[6] } ?: PillColor.RED
+        val nextB = PillColor.entries.find { it.name == parts[7] } ?: PillColor.BLUE
+
+        val activeCap = if (parts[8] == "NONE") {
+            null
+        } else {
+            val cp = parts[8].split(",")
+            ActiveCapsule(
+                x = cp[0].toInt().coerceIn(0, GRID_COLS - 1),
+                y = cp[1].toInt().coerceIn(0, GRID_ROWS - 1),
+                isVertical = cp[2] == "1",
+                colorA = PillColor.entries.find { it.name == cp[3] } ?: PillColor.RED,
+                colorB = PillColor.entries.find { it.name == cp[4] } ?: PillColor.BLUE
+            )
+        }
+
+        val cellTokens = parts[9].split(";")
+        if (cellTokens.size != GRID_ROWS * GRID_COLS) return null
+        val board = Array(GRID_ROWS) { Array(GRID_COLS) { GridCell() } }
+        var idx = 0
+        for (r in 0 until GRID_ROWS) {
+            for (c in 0 until GRID_COLS) {
+                val kv = cellTokens[idx++].split(":")
+                val kindOrd = kv[0].toIntOrNull() ?: 0
+                val colOrd = kv.getOrNull(1)?.toIntOrNull() ?: -1
+                val kind = CellKind.entries.getOrNull(kindOrd) ?: CellKind.EMPTY
+                val color = if (colOrd >= 0) PillColor.entries.getOrNull(colOrd) else null
+                board[r][c] = if (kind == CellKind.EMPTY || color == null) {
+                    GridCell()
+                } else {
+                    GridCell(kind = kind, color = color)
+                }
+            }
+        }
+
+        SavedGameState(
+            level = level,
+            score = score,
+            pillsThrown = pillsThrown,
+            speed = speed,
+            music = music,
+            nextColorA = nextA,
+            nextColorB = nextB,
+            activeCapsule = activeCap,
+            board = board
+        )
+    } catch (_: Throwable) {
+        null
+    }
 }
 
 // ============================================================================
@@ -1689,7 +1946,6 @@ private fun copyGrid(source: Array<Array<GridCell>>): Array<Array<GridCell>> {
 private fun generateBottleWithViruses(level: Int): Array<Array<GridCell>> {
     val grid = Array(GRID_ROWS) { Array(GRID_COLS) { GridCell() } }
     val virusTarget = ((level.coerceIn(0, 20) + 1) * 4).coerceAtMost(84)
-    // Ve vyšších levelech mohou být viry o něco výš, ale horní řádky 0..3 zůstávají vždy volné pro manipulaci
     val minRow = when {
         level >= 17 -> 4
         level >= 13 -> 5
@@ -1708,7 +1964,6 @@ private fun generateBottleWithViruses(level: Int): Array<Array<GridCell>> {
 
         val chosenColor = colors[placed % colors.size]
 
-        // Zabráníme tomu, aby už při generování vznikly 3 stejné viry v řadě
         val horizSame = (c >= 2 && grid[r][c - 1].color == chosenColor && grid[r][c - 2].color == chosenColor) ||
             (c <= GRID_COLS - 3 && grid[r][c + 1].color == chosenColor && grid[r][c + 2].color == chosenColor) ||
             (c in 1..(GRID_COLS - 2) && grid[r][c - 1].color == chosenColor && grid[r][c + 1].color == chosenColor)
@@ -1804,7 +2059,6 @@ private fun markMatchesForClearing(
     var virusesKilled = 0
     var tilesCleared = 0
 
-    // Odpojení zbylých polovin kapslí, jejichž dvojče bylo zničeno
     for (r in 0 until GRID_ROWS) {
         for (c in 0 until GRID_COLS) {
             if (!toClear[r][c]) continue
@@ -1878,7 +2132,6 @@ private fun applySingleGravityStep(source: Array<Array<GridCell>>): GravityStepR
     val next = copyGrid(source)
     var moved = false
 
-    // Procházíme od předposledního řádku směrem nahoru
     for (r in (GRID_ROWS - 2) downTo 0) {
         var c = 0
         while (c < GRID_COLS) {
@@ -1894,7 +2147,6 @@ private fun applySingleGravityStep(source: Array<Array<GridCell>>): GravityStepR
                 }
 
                 CellKind.BOTTOM -> {
-                    // Svislá kapsle: spodní dílek je v r, horní v r-1
                     if (next[r + 1][c].kind == CellKind.EMPTY) {
                         next[r + 1][c] = cell
                         if (r - 1 >= 0 && next[r - 1][c].kind == CellKind.TOP) {
@@ -1909,7 +2161,6 @@ private fun applySingleGravityStep(source: Array<Array<GridCell>>): GravityStepR
                 }
 
                 CellKind.LEFT -> {
-                    // Vodorovná kapsle padá pouze tehdy, když je volno pod oběma polovinami
                     if (c + 1 < GRID_COLS && next[r][c + 1].kind == CellKind.RIGHT) {
                         if (next[r + 1][c].kind == CellKind.EMPTY && next[r + 1][c + 1].kind == CellKind.EMPTY) {
                             next[r + 1][c] = cell
