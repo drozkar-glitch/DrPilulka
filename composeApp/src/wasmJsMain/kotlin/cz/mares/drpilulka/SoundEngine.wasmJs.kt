@@ -36,6 +36,16 @@ private fun jsStopMusic(): Unit = js("""
 })()
 """)
 
+private fun jsVibrate(ms: Int): Unit = js("""
+(function() {
+    try {
+        if (navigator && navigator.vibrate) {
+            navigator.vibrate(ms);
+        }
+    } catch (e) {}
+})()
+""")
+
 private fun jsSavePref(key: String, value: String): Unit = js("""
 (function() {
     try {
@@ -66,6 +76,20 @@ actual object SoundPlatform {
     actual fun loadString(key: String): String? {
         val res = jsLoadPref(key)
         return if (res.isEmpty()) null else res
+    }
+
+    actual fun vibrate(sfx: SfxType) {
+        val duration = when (sfx) {
+            SfxType.MOVE -> 12
+            SfxType.ROTATE -> 16
+            SfxType.DROP -> 28
+            SfxType.CLEAR -> 55
+            SfxType.VIRUS_KILL -> 75
+            SfxType.COMBO -> 100
+            SfxType.STAGE_CLEAR -> 150
+            SfxType.GAME_OVER -> 200
+        }
+        jsVibrate(duration)
     }
 
     actual fun playLoopingWav(track: MusicTrack, pcmShorts: ShortArray, wavBytes: ByteArray) {

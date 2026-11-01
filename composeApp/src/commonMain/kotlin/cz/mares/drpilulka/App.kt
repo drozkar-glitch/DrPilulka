@@ -146,6 +146,11 @@ fun App() {
             SoundEngine.soundEnabled = !muted
             mutableStateOf(muted)
         }
+        var vibrationMuted by remember {
+            val vMuted = GameStorage.loadVibrationMuted()
+            SoundEngine.vibrationEnabled = !vMuted
+            mutableStateOf(vMuted)
+        }
         var topScore by remember { mutableIntStateOf(GameStorage.loadTopScore()) }
         var savedGame by remember { mutableStateOf(deserializeSavedGame(GameStorage.loadGameData())) }
         var resumeFromSaved by remember { mutableStateOf(false) }
@@ -173,6 +178,7 @@ fun App() {
                             speed = selectedSpeed,
                             music = selectedMusic,
                             soundMuted = soundMuted,
+                            vibrationMuted = vibrationMuted,
                             topScore = topScore,
                             savedGame = savedGame,
                             onLevelChange = { newLvl ->
@@ -207,6 +213,15 @@ fun App() {
                                     SoundEngine.startMusic(selectedMusic)
                                 }
                             },
+                            onToggleVibration = {
+                                val nextVibMuted = !vibrationMuted
+                                vibrationMuted = nextVibMuted
+                                SoundEngine.vibrationEnabled = !nextVibMuted
+                                GameStorage.saveVibrationMuted(nextVibMuted)
+                                if (!nextVibMuted) {
+                                    SoundEngine.triggerHaptic(SfxType.ROTATE)
+                                }
+                            },
                             onContinueGame = {
                                 val existing = savedGame
                                 if (existing != null) {
@@ -214,6 +229,7 @@ fun App() {
                                     selectedSpeed = existing.speed
                                     selectedMusic = existing.music
                                     SoundEngine.soundEnabled = !soundMuted
+                                    SoundEngine.vibrationEnabled = !vibrationMuted
                                     SoundEngine.playSfx(SfxType.CLEAR)
                                     resumeFromSaved = true
                                     screenMode = ScreenMode.PLAYING
@@ -224,6 +240,7 @@ fun App() {
                                 savedGame = null
                                 resumeFromSaved = false
                                 SoundEngine.soundEnabled = !soundMuted
+                                SoundEngine.vibrationEnabled = !vibrationMuted
                                 SoundEngine.playSfx(SfxType.CLEAR)
                                 screenMode = ScreenMode.PLAYING
                             }
@@ -236,6 +253,7 @@ fun App() {
                             speed = selectedSpeed,
                             music = selectedMusic,
                             soundMuted = soundMuted,
+                            vibrationMuted = vibrationMuted,
                             topScore = topScore,
                             initialSavedState = if (resumeFromSaved) savedGame else null,
                             onUpdateTopScore = { newScore ->
@@ -265,6 +283,15 @@ fun App() {
                                     SoundEngine.startMusic(selectedMusic)
                                 }
                             },
+                            onToggleVibration = {
+                                val nextVibMuted = !vibrationMuted
+                                vibrationMuted = nextVibMuted
+                                SoundEngine.vibrationEnabled = !nextVibMuted
+                                GameStorage.saveVibrationMuted(nextVibMuted)
+                                if (!nextVibMuted) {
+                                    SoundEngine.triggerHaptic(SfxType.ROTATE)
+                                }
+                            },
                             onBackToMenu = {
                                 SoundEngine.stopMusic()
                                 savedGame = deserializeSavedGame(GameStorage.loadGameData())
@@ -284,12 +311,14 @@ private fun RetroMenuScreen(
     speed: SpeedLevel,
     music: MusicTrack,
     soundMuted: Boolean,
+    vibrationMuted: Boolean,
     topScore: Int,
     savedGame: SavedGameState?,
     onLevelChange: (Int) -> Unit,
     onSpeedChange: (SpeedLevel) -> Unit,
     onMusicChange: (MusicTrack) -> Unit,
     onToggleMute: () -> Unit,
+    onToggleVibration: () -> Unit,
     onContinueGame: () -> Unit,
     onStartNewGame: () -> Unit
 ) {
@@ -308,7 +337,7 @@ private fun RetroMenuScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Horni retro lista
+        // Horni retro lista: Rekord vlevo, prepinace Vibraci a Zvuku vpravo
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -319,23 +348,41 @@ private fun RetroMenuScreen(
                 color = Color(0xFFFACC15),
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
-                fontSize = 15.sp
+                fontSize = 14.sp
             )
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF1E293B))
-                    .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
-                    .clickable { onToggleMute() }
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = if (soundMuted) "ZVUK: VYP" else "ZVUK: ZAP",
-                    color = if (soundMuted) Color(0xFFF87171) else Color(0xFF4ADE80),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF1E293B))
+                        .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
+                        .clickable { onToggleVibration() }
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = if (vibrationMuted) "VIB: VYP" else "VIB: ZAP",
+                        color = if (vibrationMuted) Color(0xFFF87171) else Color(0xFF38BDF8),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF1E293B))
+                        .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
+                        .clickable { onToggleMute() }
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = if (soundMuted) "ZVUK: VYP" else "ZVUK: ZAP",
+                        color = if (soundMuted) Color(0xFFF87171) else Color(0xFF4ADE80),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
+                    )
+                }
             }
         }
 
@@ -617,11 +664,13 @@ private fun DrPilulkaGameScreen(
     speed: SpeedLevel,
     music: MusicTrack,
     soundMuted: Boolean,
+    vibrationMuted: Boolean,
     topScore: Int,
     initialSavedState: SavedGameState?,
     onUpdateTopScore: (Int) -> Unit,
     onSaveGameState: (SavedGameState?) -> Unit,
     onToggleMute: () -> Unit,
+    onToggleVibration: () -> Unit,
     onBackToMenu: () -> Unit
 ) {
     var currentLevel by remember { mutableIntStateOf(initialSavedState?.level ?: initialLevel) }
@@ -871,12 +920,15 @@ private fun DrPilulkaGameScreen(
         }
     }
 
-    fun stepDown(): Boolean {
+    fun stepDown(fromUserPress: Boolean = false): Boolean {
         if (phase != PlayPhase.FALLING) return false
         val cap = activeCapsule ?: return false
         return if (canPlace(board, cap.x, cap.y + 1, cap.isVertical)) {
             val updated = cap.copy(y = cap.y + 1)
             activeCapsule = updated
+            if (fromUserPress) {
+                SoundEngine.triggerHaptic(SfxType.MOVE)
+            }
             persistCurrentState(targetActive = updated)
             true
         } else {
@@ -904,7 +956,7 @@ private fun DrPilulkaGameScreen(
                     val delayMs = (speed.baseDelayMs - speedup).coerceAtLeast(280L)
                     delay(delayMs)
                     if (phase == PlayPhase.FALLING && activeCapsule != null) {
-                        stepDown()
+                        stepDown(fromUserPress = false)
                     }
                 }
             }
@@ -971,7 +1023,7 @@ private fun DrPilulkaGameScreen(
                             true
                         }
                         Key.DirectionDown -> {
-                            stepDown()
+                            stepDown(fromUserPress = true)
                             true
                         }
                         Key.DirectionUp -> {
@@ -995,7 +1047,7 @@ private fun DrPilulkaGameScreen(
             .padding(horizontal = 6.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // 1. HORNÍ LIŠTA: Rekord, Skóre + ovládání zvuku/pauzy/menu
+        // 1. HORNÍ LIŠTA: Rekord, Skóre + ovládání pauzy/vibrací/zvuku/menu
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1012,7 +1064,7 @@ private fun DrPilulkaGameScreen(
                     color = Color(0xFF94A3B8),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     maxLines = 1
                 )
                 Text(
@@ -1020,12 +1072,12 @@ private fun DrPilulkaGameScreen(
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     maxLines = 1
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 MiniHeaderButton(
                     label = if (phase == PlayPhase.PAUSED) "HRA" else "PAUZA",
                     color = Color(0xFF3B82F6)
@@ -1039,6 +1091,12 @@ private fun DrPilulkaGameScreen(
                             SoundEngine.startMusic(music)
                         }
                     }
+                }
+                MiniHeaderButton(
+                    label = if (vibrationMuted) "VIB-" else "VIB",
+                    color = if (vibrationMuted) Color(0xFFEF4444) else Color(0xFF38BDF8)
+                ) {
+                    onToggleVibration()
                 }
                 MiniHeaderButton(
                     label = if (soundMuted) "NĚMÝ" else "ZVUK",
@@ -1175,7 +1233,6 @@ private fun DrPilulkaGameScreen(
                         val maxCellW = size.width / (GRID_COLS + 0.35f)
                         val maxCellH = size.height / (GRID_ROWS + neckUnits + 0.35f)
 
-                        // Umožníme lahvi využít větší šířku (buňky mohou být mírně širší jako na CRT TV)
                         val cellH = minOf(maxCellH, maxCellW * 1.05f)
                         val cellW = minOf(maxCellW, cellH * 1.22f)
 
@@ -1468,7 +1525,7 @@ private fun DrPilulkaGameScreen(
             ) {
                 DPadButton("◀", widthDp = 46) { moveHorizontal(-1) }
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    DPadButton("▼", widthDp = 46) { stepDown() }
+                    DPadButton("▼", widthDp = 46) { stepDown(fromUserPress = true) }
                     DPadButton("⏬", widthDp = 46) { hardDrop() }
                 }
                 DPadButton("▶", widthDp = 46) { moveHorizontal(1) }
@@ -1497,14 +1554,14 @@ private fun MiniHeaderButton(label: String, color: Color, onClick: () -> Unit) {
             .background(color.copy(alpha = 0.2f))
             .border(1.dp, color, RoundedCornerShape(6.dp))
             .clickable { onClick() }
-            .padding(horizontal = 7.dp, vertical = 5.dp)
+            .padding(horizontal = 6.dp, vertical = 5.dp)
     ) {
         Text(
             text = label,
             color = Color.White,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
-            fontSize = 11.sp,
+            fontSize = 10.sp,
             maxLines = 1
         )
     }

@@ -9,8 +9,8 @@ env:
   APP_NAME: "DrPilulka"
   BUNDLE_ID: "cz.mares.drpilulka"
   APP_VERSION: "1.0"
-  PUBLISH_TO_STORES: "false"
-  BUILD_IOS: "false"
+  PUBLISH_TO_STORES: "true"
+  BUILD_IOS: "true"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -195,7 +195,7 @@ jobs:
   build-ios:
     name: iOS Release (.ipa & TestFlight)
     runs-on: macos-latest
-    if: false
+    if: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

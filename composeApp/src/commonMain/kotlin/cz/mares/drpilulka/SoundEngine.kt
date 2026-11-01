@@ -21,6 +21,7 @@ expect object SoundPlatform {
     fun playLoopingWav(track: MusicTrack, pcmShorts: ShortArray, wavBytes: ByteArray)
     fun stopLoopingMusic()
     fun playSfxWav(sfx: SfxType, pcmShorts: ShortArray, wavBytes: ByteArray)
+    fun vibrate(sfx: SfxType)
     fun saveString(key: String, value: String)
     fun loadString(key: String): String?
 }
@@ -31,6 +32,7 @@ object GameStorage {
     private const val KEY_LAST_SPEED = "drpilulka_last_speed"
     private const val KEY_LAST_MUSIC = "drpilulka_last_music"
     private const val KEY_MUTED = "drpilulka_muted"
+    private const val KEY_VIB_MUTED = "drpilulka_vib_muted"
     private const val KEY_SAVED_GAME = "drpilulka_saved_game_v1"
 
     fun loadTopScore(): Int {
@@ -73,6 +75,14 @@ object GameStorage {
         SoundPlatform.saveString(KEY_MUTED, if (muted) "1" else "0")
     }
 
+    fun loadVibrationMuted(): Boolean {
+        return SoundPlatform.loadString(KEY_VIB_MUTED) == "1"
+    }
+
+    fun saveVibrationMuted(muted: Boolean) {
+        SoundPlatform.saveString(KEY_VIB_MUTED, if (muted) "1" else "0")
+    }
+
     fun saveGameData(serialized: String) {
         SoundPlatform.saveString(KEY_SAVED_GAME, serialized)
     }
@@ -89,6 +99,7 @@ object GameStorage {
 
 object SoundEngine {
     var soundEnabled: Boolean = true
+    var vibrationEnabled: Boolean = true
     private var currentTrack: MusicTrack = MusicTrack.OFF
 
     private val musicPcmCache = mutableMapOf<MusicTrack, ShortArray>()
@@ -121,7 +132,16 @@ object SoundEngine {
         SoundPlatform.stopLoopingMusic()
     }
 
+    fun triggerHaptic(sfx: SfxType) {
+        if (vibrationEnabled) {
+            SoundPlatform.vibrate(sfx)
+        }
+    }
+
     fun playSfx(sfx: SfxType) {
+        if (vibrationEnabled) {
+            SoundPlatform.vibrate(sfx)
+        }
         if (!soundEnabled) return
         val pcm = sfxPcmCache.getOrPut(sfx) {
             RetroSynth.synthesizeSfx(sfx)
@@ -272,7 +292,6 @@ object RetroSynth {
             for (i in 0 until stepSamples) {
                 val progress = i.toFloat() / stepSamples.toFloat()
 
-                // Kanal 1: Obdelnikova vlna (hlavni melodie)
                 var leadSample = 0f
                 if (lFreq > 0f) {
                     leadPhase = (leadPhase + lFreq / SAMPLE_RATE) % 1.0f
@@ -281,7 +300,6 @@ object RetroSynth {
                     leadSample = rawPulse * env * 0.32f
                 }
 
-                // Kanal 2: Trojuhelnikova vlna (8bitova basa)
                 var bassSample = 0f
                 if (bFreq > 0f) {
                     bassPhase = (bassPhase + bFreq / SAMPLE_RATE) % 1.0f
@@ -294,7 +312,6 @@ object RetroSynth {
                     bassSample = rawTri * env * 0.36f
                 }
 
-                // Kanal 3: 8bitovy bicak / hi-hat sum
                 var noiseSample = 0f
                 if (isSnare && i < stepSamples / 3) {
                     val bit = ((lfsr shr 0) xor (lfsr shr 1)) and 1
@@ -406,7 +423,6 @@ object RetroSynth {
         return out
     }
 
-    // Zabaleni 16bitovych PCM vzorku do standardniho RIFF WAV souboru v pameti
     fun encodeWav(pcm: ShortArray): ByteArray {
         val dataSize = pcm.size * 2
         val totalSize = 44 + dataSize

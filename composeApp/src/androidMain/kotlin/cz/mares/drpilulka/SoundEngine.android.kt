@@ -4,6 +4,9 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 
 actual object SoundPlatform {
     private var musicTrackPlayer: AudioTrack? = null
@@ -35,6 +38,42 @@ actual object SoundPlatform {
             prefs.getString(key, null)
         } catch (_: Throwable) {
             null
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    actual fun vibrate(sfx: SfxType) {
+        try {
+            val ctx = getAppContext() ?: return
+            val vibrator = ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
+            if (!vibrator.hasVibrator()) return
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val effect = when (sfx) {
+                    SfxType.MOVE -> VibrationEffect.createOneShot(14L, 75)
+                    SfxType.ROTATE -> VibrationEffect.createOneShot(18L, 110)
+                    SfxType.DROP -> VibrationEffect.createOneShot(32L, 175)
+                    SfxType.CLEAR -> VibrationEffect.createWaveform(longArrayOf(0L, 35L, 40L, 55L), -1)
+                    SfxType.VIRUS_KILL -> VibrationEffect.createWaveform(longArrayOf(0L, 45L, 35L, 80L), -1)
+                    SfxType.COMBO -> VibrationEffect.createWaveform(longArrayOf(0L, 40L, 30L, 55L, 30L, 95L), -1)
+                    SfxType.STAGE_CLEAR -> VibrationEffect.createWaveform(longArrayOf(0L, 60L, 45L, 60L, 45L, 140L), -1)
+                    SfxType.GAME_OVER -> VibrationEffect.createWaveform(longArrayOf(0L, 120L, 65L, 180L), -1)
+                }
+                vibrator.vibrate(effect)
+            } else {
+                val duration = when (sfx) {
+                    SfxType.MOVE -> 14L
+                    SfxType.ROTATE -> 18L
+                    SfxType.DROP -> 32L
+                    SfxType.CLEAR -> 65L
+                    SfxType.VIRUS_KILL -> 90L
+                    SfxType.COMBO -> 120L
+                    SfxType.STAGE_CLEAR -> 180L
+                    SfxType.GAME_OVER -> 220L
+                }
+                vibrator.vibrate(duration)
+            }
+        } catch (_: Throwable) {
         }
     }
 

@@ -11,6 +11,10 @@ import platform.AVFAudio.setActive
 import platform.Foundation.NSData
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.create
+import platform.UIKit.UIImpactFeedbackGenerator
+import platform.UIKit.UIImpactFeedbackStyle
+import platform.UIKit.UINotificationFeedbackGenerator
+import platform.UIKit.UINotificationFeedbackType
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 actual object SoundPlatform {
@@ -30,6 +34,39 @@ actual object SoundPlatform {
             NSUserDefaults.standardUserDefaults.stringForKey(key)
         } catch (_: Throwable) {
             null
+        }
+    }
+
+    actual fun vibrate(sfx: SfxType) {
+        try {
+            when (sfx) {
+                SfxType.MOVE -> {
+                    val gen = UIImpactFeedbackGenerator(style = UIImpactFeedbackStyle.UIImpactFeedbackStyleLight)
+                    gen.prepare()
+                    gen.impactOccurred()
+                }
+                SfxType.ROTATE, SfxType.DROP -> {
+                    val gen = UIImpactFeedbackGenerator(style = UIImpactFeedbackStyle.UIImpactFeedbackStyleMedium)
+                    gen.prepare()
+                    gen.impactOccurred()
+                }
+                SfxType.CLEAR, SfxType.VIRUS_KILL -> {
+                    val gen = UIImpactFeedbackGenerator(style = UIImpactFeedbackStyle.UIImpactFeedbackStyleHeavy)
+                    gen.prepare()
+                    gen.impactOccurred()
+                }
+                SfxType.COMBO, SfxType.STAGE_CLEAR -> {
+                    val gen = UINotificationFeedbackGenerator()
+                    gen.prepare()
+                    gen.notificationOccurred(UINotificationFeedbackType.UINotificationFeedbackTypeSuccess)
+                }
+                SfxType.GAME_OVER -> {
+                    val gen = UINotificationFeedbackGenerator()
+                    gen.prepare()
+                    gen.notificationOccurred(UINotificationFeedbackType.UINotificationFeedbackTypeError)
+                }
+            }
+        } catch (_: Throwable) {
         }
     }
 
