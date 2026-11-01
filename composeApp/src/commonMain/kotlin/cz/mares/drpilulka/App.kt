@@ -87,9 +87,9 @@ data class GridCell(
 )
 
 enum class SpeedLevel(val label: String, val baseDelayMs: Long) {
-    LOW("LOW", 620L),
-    MED("MED", 420L),
-    HI("HI", 250L)
+    LOW("LOW", 1050L),
+    MED("MED", 750L),
+    HI("HI", 480L)
 }
 
 enum class ScreenMode {
@@ -730,13 +730,13 @@ private fun DrPilulkaGameScreen(
         lockAndEvaluate(cap)
     }
 
-    // Hlavni herní smycka (pad pilulky, animace zmizeni a kompletni kaskadova gravitace)
+    // Hlavni herní smycka (pohodovy pad pilulky, animace zmizeni a kompletni kaskadova gravitace)
     LaunchedEffect(phase, speed) {
         when (phase) {
             PlayPhase.FALLING -> {
                 while (phase == PlayPhase.FALLING) {
-                    val speedup = (pillsThrown / 10) * 18L
-                    val delayMs = (speed.baseDelayMs - speedup).coerceAtLeast(110L)
+                    val speedup = (pillsThrown / 10) * 15L
+                    val delayMs = (speed.baseDelayMs - speedup).coerceAtLeast(280L)
                     delay(delayMs)
                     if (phase == PlayPhase.FALLING && activeCapsule != null) {
                         stepDown()
@@ -745,7 +745,7 @@ private fun DrPilulkaGameScreen(
             }
 
             PlayPhase.CLEARING_ANIM -> {
-                delay(220L)
+                delay(240L)
                 val cleaned = removeClearedCells(board)
                 board = cleaned
                 if (countAllViruses(cleaned) == 0) {
@@ -759,7 +759,7 @@ private fun DrPilulkaGameScreen(
 
             PlayPhase.GRAVITY_STEP -> {
                 while (phase == PlayPhase.GRAVITY_STEP) {
-                    delay(80L)
+                    delay(120L)
                     val gravStep = applySingleGravityStep(board)
                     board = gravStep.grid
                     if (!gravStep.movedAny) {
@@ -830,7 +830,7 @@ private fun DrPilulkaGameScreen(
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // 1. HORNÍ LIŠTA: Skóre + ovládání zvuku/pauzy/menu (s odstupem, aby do sebe nenarazely)
+        // 1. HORNÍ LIŠTA: Skóre + ovládání zvuku/pauzy/menu
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1289,7 +1289,7 @@ private fun DrPilulkaGameScreen(
             }
         }
 
-        // 3. SPODNÍ RETRO OVLÁDACÍ PANEL (NES D-Pad vlevo + kulatá tlačítka B / A vpravo)
+        // 3. SPODNÍ RETRO OVLÁDACÍ PANEL (NES D-Pad vlevo + kulatá tlačítka se směrem otáčení vpravo)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1313,40 +1313,16 @@ private fun DrPilulkaGameScreen(
                 DPadButton("▶", widthDp = 46) { moveHorizontal(1) }
             }
 
-            // Vpravo: Tlačítka B (rotace doleva) a A (rotace doprava) s pevným kruhovým tvarem
+            // Vpravo: Kulatá tlačítka přímo se symbolem směru otáčení (doleva ↺ a doprava ↻)
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    ArcadeRoundButton("B", Color(0xFFEF4444)) {
-                        rotateCapsule(clockwise = false)
-                    }
-                    Spacer(modifier = Modifier.height(3.dp))
-                    Text(
-                        text = "OTOC ↺",
-                        color = Color(0xFF94A3B8),
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 10.sp,
-                        maxLines = 1,
-                        softWrap = false
-                    )
+                ArcadeRoundButton("↺", Color(0xFFEF4444)) {
+                    rotateCapsule(clockwise = false)
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    ArcadeRoundButton("A", Color(0xFFEF4444)) {
-                        rotateCapsule(clockwise = true)
-                    }
-                    Spacer(modifier = Modifier.height(3.dp))
-                    Text(
-                        text = "OTOC ↻",
-                        color = Color(0xFF94A3B8),
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 10.sp,
-                        maxLines = 1,
-                        softWrap = false
-                    )
+                ArcadeRoundButton("↻", Color(0xFFEF4444)) {
+                    rotateCapsule(clockwise = true)
                 }
             }
         }
@@ -1476,10 +1452,10 @@ private fun DPadButton(symbol: String, widthDp: Int, onAction: () -> Unit) {
 }
 
 @Composable
-private fun ArcadeRoundButton(label: String, color: Color, onAction: () -> Unit) {
+private fun ArcadeRoundButton(symbol: String, color: Color, onAction: () -> Unit) {
     Box(
         modifier = Modifier
-            .requiredSize(52.dp)
+            .requiredSize(56.dp)
             .clip(CircleShape)
             .background(color)
             .border(3.dp, Color(0xFFFDE047), CircleShape)
@@ -1491,11 +1467,11 @@ private fun ArcadeRoundButton(label: String, color: Color, onAction: () -> Unit)
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = label,
+            text = symbol,
             color = Color.White,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.ExtraBold,
-            fontSize = 20.sp
+            fontSize = 26.sp
         )
     }
 }
