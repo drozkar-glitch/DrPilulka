@@ -137,7 +137,10 @@ data class SavedGameState(
 fun App() {
     MaterialTheme {
         var screenMode by remember { mutableStateOf(ScreenMode.MENU) }
-        var selectedLevel by remember { mutableIntStateOf(GameStorage.loadLastLevel()) }
+        var selectedLevel by remember {
+            GameStorage.saveLastLevel(0)
+            mutableIntStateOf(0)
+        }
         var selectedSpeed by remember {
             mutableStateOf(
                 SpeedLevel.entries.find { it.name == GameStorage.loadLastSpeedName() } ?: SpeedLevel.MED
@@ -217,6 +220,8 @@ fun App() {
                             },
                             onSpeedChange = { newSpd ->
                                 selectedSpeed = newSpd
+                                selectedLevel = 0
+                                GameStorage.saveLastLevel(0)
                                 GameStorage.saveLastSpeedName(newSpd.name)
                                 SoundEngine.playSfx(SfxType.ROTATE)
                             },
@@ -257,7 +262,6 @@ fun App() {
                             onContinueGame = {
                                 val existing = savedGame
                                 if (existing != null) {
-                                    selectedLevel = existing.level
                                     selectedSpeed = existing.speed
                                     selectedMusic = existing.music
                                     SoundEngine.soundEnabled = !soundMuted
@@ -349,11 +353,15 @@ fun App() {
                             onOpenLeaderboard = {
                                 SoundEngine.stopMusic()
                                 savedGame = deserializeSavedGame(GameStorage.loadGameData())
+                                selectedLevel = 0
+                                GameStorage.saveLastLevel(0)
                                 screenMode = ScreenMode.LEADERBOARD
                             },
                             onBackToMenu = {
                                 SoundEngine.stopMusic()
                                 savedGame = deserializeSavedGame(GameStorage.loadGameData())
+                                selectedLevel = 0
+                                GameStorage.saveLastLevel(0)
                                 screenMode = ScreenMode.MENU
                             }
                         )
@@ -398,11 +406,11 @@ private fun RetroMenuScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // 1. Horni cista lista: vlevo rekord pro aktualni rychlost padu, vpravo nick
+        // 1. Horni cista lista: vlevo rekord pro aktualni rychlost padu, vpravo cely nick bez orezani
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -410,41 +418,40 @@ private fun RetroMenuScreen(
                 .background(Color(0xFF0F172A))
                 .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
                 .clickable { onOpenLeaderboard() }
-                .padding(horizontal = 12.dp, vertical = 9.dp),
+                .padding(horizontal = 10.dp, vertical = 7.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "REKORD (${speed.shortLabel}): ${topScore.toString().padStart(7, '0')}",
+                text = "REKORD: ${topScore.toString().padStart(7, '0')}",
                 color = Color(0xFFFACC15),
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 13.sp,
+                fontSize = 11.sp,
                 maxLines = 1,
                 softWrap = false
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = if (playerNick.isBlank()) "NICK: NENASTAVEN" else "NICK: $playerNick",
                 color = Color(0xFF38BDF8),
                 fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                fontSize = 12.sp,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 11.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.End,
-                modifier = Modifier.weight(1f)
+                textAlign = TextAlign.End
             )
         }
 
-        // 2. Pixel-artovy banner s doktorem a viry
+        // 2. Kompaktni pixel-artovy banner s doktorem a viry
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF0F172A))
-                .border(3.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
-                .padding(vertical = 8.dp, horizontal = 10.dp),
+                .border(2.5.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
+                .padding(vertical = 6.dp, horizontal = 10.dp),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -453,7 +460,7 @@ private fun RetroMenuScreen(
                     color = Color(0xFFEF4444),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 26.sp,
+                    fontSize = 23.sp,
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
@@ -462,13 +469,13 @@ private fun RetroMenuScreen(
                     color = Color(0xFF93C5FD),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(6.dp))
-                Canvas(modifier = Modifier.size(width = 216.dp, height = 42.dp)) {
-                    val cell = size.height * 0.72f
+                Spacer(modifier = Modifier.height(4.dp))
+                Canvas(modifier = Modifier.size(width = 200.dp, height = 34.dp)) {
+                    val cell = size.height * 0.74f
                     val yOff = (size.height - cell) / 2f
                     drawPixelVirus(Offset(size.width * 0.08f, yOff), cell, cell, PillColor.RED, animFrame)
                     drawPixelVirus(Offset(size.width * 0.31f, yOff), cell, cell, PillColor.YELLOW, animFrame)
@@ -494,15 +501,15 @@ private fun RetroMenuScreen(
             }
         }
 
-        // 3. Nastaveni hry (vcetne prepinacu Zvuku a Vibraci dole u hudby)
+        // 3. Nastaveni hry (kompaktni vyska, aby se dole vesla vsechna 3 tlacitka i copyright)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF0F172A))
                 .border(2.dp, Color(0xFF3B82F6), RoundedCornerShape(12.dp))
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
         ) {
             // UROVEN VIRU (00 - 20)
             Column(
@@ -514,11 +521,11 @@ private fun RetroMenuScreen(
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -528,11 +535,11 @@ private fun RetroMenuScreen(
                     RetroStepButton("-") { onLevelChange(level - 1) }
                     Box(
                         modifier = Modifier
-                            .width(64.dp)
+                            .width(60.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF070A14))
                             .border(2.dp, Color(0xFFE2E8F0), RoundedCornerShape(6.dp))
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 3.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -540,7 +547,7 @@ private fun RetroMenuScreen(
                             color = Color.White,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 19.sp,
+                            fontSize = 17.sp,
                             maxLines = 1
                         )
                     }
@@ -559,11 +566,11 @@ private fun RetroMenuScreen(
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -581,7 +588,7 @@ private fun RetroMenuScreen(
                                     shape = RoundedCornerShape(8.dp)
                                 )
                                 .clickable { onSpeedChange(item) }
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -589,7 +596,7 @@ private fun RetroMenuScreen(
                                 color = Color.White,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 maxLines = 1,
                                 softWrap = false
                             )
@@ -608,11 +615,11 @@ private fun RetroMenuScreen(
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -630,7 +637,7 @@ private fun RetroMenuScreen(
                                     shape = RoundedCornerShape(8.dp)
                                 )
                                 .clickable { onMusicChange(track) }
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -638,14 +645,14 @@ private fun RetroMenuScreen(
                                 color = Color.White,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 maxLines = 1,
                                 softWrap = false
                             )
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(5.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -661,7 +668,7 @@ private fun RetroMenuScreen(
                                 shape = RoundedCornerShape(8.dp)
                             )
                             .clickable { onToggleMute() }
-                            .padding(vertical = 7.dp),
+                            .padding(vertical = 5.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -669,7 +676,7 @@ private fun RetroMenuScreen(
                             color = if (!soundMuted) Color(0xFF4ADE80) else Color(0xFFF87171),
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             maxLines = 1
                         )
                     }
@@ -684,7 +691,7 @@ private fun RetroMenuScreen(
                                 shape = RoundedCornerShape(8.dp)
                             )
                             .clickable { onToggleVibration() }
-                            .padding(vertical = 7.dp),
+                            .padding(vertical = 5.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -692,7 +699,7 @@ private fun RetroMenuScreen(
                             color = if (!vibrationMuted) Color(0xFF38BDF8) else Color(0xFFF87171),
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             maxLines = 1
                         )
                     }
@@ -704,7 +711,7 @@ private fun RetroMenuScreen(
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Box(
                 modifier = Modifier
@@ -713,7 +720,7 @@ private fun RetroMenuScreen(
                     .background(Color(0xFF1E293B))
                     .border(2.dp, Color(0xFFFACC15), RoundedCornerShape(10.dp))
                     .clickable { onOpenLeaderboard() }
-                    .padding(vertical = 9.dp, horizontal = 10.dp),
+                    .padding(vertical = 8.dp, horizontal = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -721,7 +728,7 @@ private fun RetroMenuScreen(
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
@@ -734,7 +741,7 @@ private fun RetroMenuScreen(
                         .background(Color(0xFF3B82F6))
                         .border(2.dp, Color(0xFFFDE047), RoundedCornerShape(10.dp))
                         .clickable { onContinueGame() }
-                        .padding(vertical = 10.dp, horizontal = 8.dp),
+                        .padding(vertical = 8.dp, horizontal = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -742,7 +749,7 @@ private fun RetroMenuScreen(
                         color = Color.White,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         softWrap = false
@@ -756,7 +763,7 @@ private fun RetroMenuScreen(
                     .background(Color(0xFF22C55E))
                     .border(2.dp, Color.White, RoundedCornerShape(10.dp))
                     .clickable { onStartNewGame() }
-                    .padding(vertical = 11.dp, horizontal = 12.dp),
+                    .padding(vertical = 9.dp, horizontal = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -764,7 +771,7 @@ private fun RetroMenuScreen(
                     color = Color(0xFF052E16),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 18.sp,
+                    fontSize = 16.sp,
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
@@ -774,7 +781,7 @@ private fun RetroMenuScreen(
                 color = Color(0xFF94A3B8),
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 textAlign = TextAlign.Center,
                 maxLines = 1
             )
@@ -835,7 +842,7 @@ private fun RetroLeaderboardScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 1. Horni lista okna rekordu (pruzny nadpis + cele tlacitko OBNOVIT bez orezani)
+        // 1. Horni lista okna rekordu (cely nadpis ONLINE REKORDY (TOP 50) + tlacitko OBNOVIT bez orezani)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -851,12 +858,12 @@ private fun RetroLeaderboardScreen(
                 color = Color(0xFFFACC15),
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 14.sp,
+                fontSize = 12.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                softWrap = false,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 8.dp)
+                    .padding(end = 6.dp)
             )
             MiniHeaderButton(
                 label = "OBNOVIT",
@@ -925,13 +932,12 @@ private fun RetroLeaderboardScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "ZVOL SI PŘEZDÍVKU (JEDNORÁZOVĚ)",
+                        text = "ZVOL SI PŘEZDÍVKU",
                         color = Color(0xFF93C5FD),
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
-                        maxLines = 1,
-                        modifier = Modifier.weight(1f)
+                        maxLines = 1
                     )
                     Text(
                         text = "OSOBNÍ: $personalScoreToSend B.",
@@ -963,7 +969,7 @@ private fun RetroLeaderboardScreen(
                                 text = "Zadej nick (2-14 znaků)...",
                                 color = Color(0xFF64748B),
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 maxLines = 1
                             )
                         }
@@ -979,7 +985,7 @@ private fun RetroLeaderboardScreen(
                                 color = Color.White,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 14.sp
+                                fontSize = 13.sp
                             ),
                             cursorBrush = SolidColor(Color(0xFFFACC15)),
                             modifier = Modifier.fillMaxWidth()
@@ -1040,7 +1046,7 @@ private fun RetroLeaderboardScreen(
                 }
             }
         } else {
-            // Uzamceny informacni prouzek po ulozeni nicku (s oddelenim a celym skore vpravo)
+            // Uzamceny informacni prouzek po ulozeni nicku (11.sp bez orezavani jmena StrongBow)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1056,19 +1062,19 @@ private fun RetroLeaderboardScreen(
                     color = Color(0xFF38BDF8),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .weight(1f)
-                        .padding(end = 8.dp)
+                        .padding(end = 6.dp)
                 )
                 Text(
                     text = "OSOBNÍ: ${personalScoreToSend.toString().padStart(7, '0')} B.",
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     maxLines = 1,
                     softWrap = false
                 )
@@ -1226,7 +1232,7 @@ private fun RetroLeaderboardScreen(
 private fun RetroStepButton(label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(38.dp)
+            .size(34.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF1E293B))
             .border(2.dp, Color(0xFF94A3B8), RoundedCornerShape(8.dp))
@@ -1238,7 +1244,7 @@ private fun RetroStepButton(label: String, onClick: () -> Unit) {
             color = Color.White,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.ExtraBold,
-            fontSize = 14.sp,
+            fontSize = 13.sp,
             maxLines = 1
         )
     }
@@ -2023,7 +2029,6 @@ private fun DrPilulkaGameScreen(
                                 OverlayActionButton("DALŠÍ ÚROVEŇ (${(currentLevel + 1).coerceAtMost(20)})", Color(0xFF22C55E)) {
                                     val nextLvl = (currentLevel + 1).coerceAtMost(20)
                                     currentLevel = nextLvl
-                                    GameStorage.saveLastLevel(nextLvl)
                                     startStage(nextLvl)
                                 }
                             }
@@ -2045,7 +2050,8 @@ private fun DrPilulkaGameScreen(
                                 )
                                 OverlayActionButton("ZKUSIT ZNOVU", Color(0xFF3B82F6)) {
                                     score = 0
-                                    startStage(currentLevel)
+                                    currentLevel = initialLevel
+                                    startStage(initialLevel)
                                 }
                                 OverlayActionButton("ONLINE REKORDY", Color(0xFFB45309)) {
                                     onOpenLeaderboard()
