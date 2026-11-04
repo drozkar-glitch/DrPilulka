@@ -1632,36 +1632,43 @@ private fun DrPilulkaGameScreen(
             .padding(horizontal = 6.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // 1. HORNI LISTA: Rekord, Skore + ovladani pauzy/vibraci/zvuku/menu
+        // 1. HORNI LISTA: Rekord a Skore vlevo + pouze PAUZA a MENU vpravo
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color(0xFF0F172A))
                 .border(2.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
                 Text(
-                    text = "REKORD ${topScore.toString().padStart(7, '0')}",
+                    text = "REKORD: ${topScore.toString().padStart(7, '0')}",
                     color = Color(0xFF94A3B8),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 10.sp,
-                    maxLines = 1
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    softWrap = false
                 )
                 Text(
-                    text = "SKÓRE  ${score.toString().padStart(7, '0')}",
+                    text = "SKÓRE:  ${score.toString().padStart(7, '0')}",
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 12.sp,
-                    maxLines = 1
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 MiniHeaderButton(
                     label = if (phase == PlayPhase.PAUSED) "HRA" else "PAUZA",
                     color = Color(0xFF3B82F6)
@@ -1675,18 +1682,6 @@ private fun DrPilulkaGameScreen(
                             SoundEngine.startMusic(music)
                         }
                     }
-                }
-                MiniHeaderButton(
-                    label = if (vibrationMuted) "VIB-" else "VIB",
-                    color = if (vibrationMuted) Color(0xFFEF4444) else Color(0xFF38BDF8)
-                ) {
-                    onToggleVibration()
-                }
-                MiniHeaderButton(
-                    label = if (soundMuted) "NĚMÝ" else "ZVUK",
-                    color = if (soundMuted) Color(0xFFEF4444) else Color(0xFF22C55E)
-                ) {
-                    onToggleMute()
                 }
                 MiniHeaderButton(
                     label = "MENU",
