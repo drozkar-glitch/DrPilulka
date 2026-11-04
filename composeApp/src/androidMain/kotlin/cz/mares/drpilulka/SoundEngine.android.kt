@@ -5,8 +5,12 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
+import java.net.HttpURLConnection
+import java.net.URL
 
 actual object SoundPlatform {
     private var musicTrackPlayer: AudioTrack? = null
@@ -41,13 +45,47 @@ actual object SoundPlatform {
         }
     }
 
+    actual fun httpRequest(
+        url: String,
+        method: String,
+        jsonBody: String?,
+        onResult: (statusCode: Int, responseBody: String?) -> Unit
+    ) {
+        val mainHandler = Handler(Looper.getMainLooper())
+        Thread {
+            var conn: HttpURLConnection? = null
+            try {
+                conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = method
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    setRequestProperty("Accept", "application/json")
+                    if (jsonBody != null) {
+                        doOutput = true
+                        setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        outputStream.use { os ->
+                            os.write(jsonBody.toByteArray(Charsets.UTF_8))
+                        }
+                    }
+                }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                mainHandler.post { onResult(code, body) }
+            } catch (_: Throwable) {
+                mainHandler.post { onResult(-1, null) }
+            } finally {
+                conn?.disconnect()
+            }
+        }.start()
+    }
+
     @Suppress("DEPRECATION")
     actual fun vibrate(sfx: SfxType) {
         try {
             val ctx = getAppContext() ?: return
             val vibrator = ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
             if (!vibrator.hasVibrator()) return
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val effect = when (sfx) {
                     SfxType.MOVE -> VibrationEffect.createOneShot(14L, 75)
@@ -134,7 +172,6 @@ actual object SoundPlatform {
                 existing.play()
                 return
             }
-
             val bufferBytes = pcmShorts.size * 2
             val sfxTrack = AudioTrack.Builder()
                 .setAudioAttributes(

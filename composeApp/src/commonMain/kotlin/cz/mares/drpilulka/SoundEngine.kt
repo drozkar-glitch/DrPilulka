@@ -1,5 +1,7 @@
 package cz.mares.drpilulka
 
+import kotlin.random.Random
+
 enum class MusicTrack(val label: String) {
     FEVER("FEVER"),
     CHILL("CHILL"),
@@ -24,7 +26,33 @@ expect object SoundPlatform {
     fun vibrate(sfx: SfxType)
     fun saveString(key: String, value: String)
     fun loadString(key: String): String?
+    fun httpRequest(
+        url: String,
+        method: String,
+        jsonBody: String?,
+        onResult: (statusCode: Int, responseBody: String?) -> Unit
+    )
 }
+
+data class LeaderboardEntry(
+    val rank: Int,
+    val nick: String,
+    val score: Int,
+    val isCurrentPlayer: Boolean
+)
+
+enum class SubmitResultStatus {
+    SUCCESS,
+    NICK_TAKEN,
+    INVALID_NICK,
+    NETWORK_ERROR
+}
+
+data class SubmitScoreResult(
+    val status: SubmitResultStatus,
+    val message: String,
+    val syncedScore: Int = 0
+)
 
 object GameStorage {
     private const val KEY_TOP_SCORE = "drpilulka_top_score"
@@ -34,13 +62,42 @@ object GameStorage {
     private const val KEY_MUTED = "drpilulka_muted"
     private const val KEY_VIB_MUTED = "drpilulka_vib_muted"
     private const val KEY_SAVED_GAME = "drpilulka_saved_game_v1"
+    private const val KEY_PLAYER_NICK = "drpilulka_player_nick"
+    private const val KEY_DEVICE_ID = "drpilulka_device_id"
 
     fun loadTopScore(): Int {
         return SoundPlatform.loadString(KEY_TOP_SCORE)?.toIntOrNull() ?: 10000
     }
 
+    fun hasRecordedPersonalScore(): Boolean {
+        return SoundPlatform.loadString(KEY_TOP_SCORE)?.toIntOrNull() != null
+    }
+
     fun saveTopScore(score: Int) {
         SoundPlatform.saveString(KEY_TOP_SCORE, score.toString())
+    }
+
+    fun loadPlayerNick(): String {
+        return SoundPlatform.loadString(KEY_PLAYER_NICK)?.trim() ?: ""
+    }
+
+    fun savePlayerNick(nick: String) {
+        SoundPlatform.saveString(KEY_PLAYER_NICK, nick.trim())
+    }
+
+    fun getOrCreateDeviceId(): String {
+        val existing = SoundPlatform.loadString(KEY_DEVICE_ID)
+        if (!existing.isNullOrBlank() && existing.length >= 12) {
+            return existing
+        }
+        val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        val sb = StringBuilder("dev_")
+        repeat(20) {
+            sb.append(chars[Random.nextInt(chars.length)])
+        }
+        val created = sb.toString()
+        SoundPlatform.saveString(KEY_DEVICE_ID, created)
+        return created
     }
 
     fun loadLastLevel(): Int {
@@ -94,6 +151,263 @@ object GameStorage {
 
     fun clearSavedGame() {
         SoundPlatform.saveString(KEY_SAVED_GAME, "")
+    }
+}
+
+object OnlineLeaderboard {
+    private const val DB_BASE_URL = "https://mares-games-default-rtdb.europe-west1.firebasedatabase.app"
+    private const val GAME_ID = "drpilulka"
+
+    fun sanitizeNick(raw: String): String {
+        val sb = StringBuilder()
+        for (ch in raw.trim()) {
+            if (ch.isLetterOrDigit() || ch == '_' || ch == '-' || ch == ' ') {
+                sb.append(ch)
+            }
+            if (sb.length >= 14) break
+        }
+        return sb.toString().trim()
+    }
+
+    private fun encodeUrlComponent(value: String): String {
+        val bytes = value.encodeToByteArray()
+        val hex = "0123456789ABCDEF"
+        val sb = StringBuilder()
+        for (b in bytes) {
+            val c = b.toInt() and 0xFF
+            val isUnreserved = (c in 'A'.code..'Z'.code) ||
+                (c in 'a'.code..'z'.code) ||
+                (c in '0'.code..'9'.code) ||
+                c == '-'.code || c == '_'.code
+            if (isUnreserved) {
+                sb.append(c.toChar())
+            } else {
+                sb.append('%')
+                sb.append(hex[(c shr 4) and 0x0F])
+                sb.append(hex[c and 0x0F])
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun escapeJsonString(value: String): String {
+        return value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+    }
+
+    fun fetchTopScores(
+        limit: Int = 50,
+        onResult: (entries: List<LeaderboardEntry>, errorMessage: String?) -> Unit
+    ) {
+        val currentNick = GameStorage.loadPlayerNick()
+        val url = "$DB_BASE_URL/high_scores/$GAME_ID.json"
+        SoundPlatform.httpRequest(url = url, method = "GET", jsonBody = null) { status, body ->
+            if (status !in 200..299 || body == null) {
+                onResult(emptyList(), "Nelze načíst tabulku (zkontroluj připojení).")
+                return@httpRequest
+            }
+            val trimmed = body.trim()
+            if (trimmed.isEmpty() || trimmed == "null" || trimmed == "{}") {
+                onResult(emptyList(), null)
+                return@httpRequest
+            }
+            val parsed = parseLeaderboardMap(trimmed, currentNick)
+                .sortedByDescending { it.score }
+                .take(limit)
+                .mapIndexed { idx, item -> item.copy(rank = idx + 1) }
+            onResult(parsed, null)
+        }
+    }
+
+    fun submitScore(
+        rawNick: String,
+        scoreToSubmit: Int,
+        onResult: (SubmitScoreResult) -> Unit
+    ) {
+        val cleanNick = sanitizeNick(rawNick)
+        if (cleanNick.length < 2) {
+            onResult(
+                SubmitScoreResult(
+                    status = SubmitResultStatus.INVALID_NICK,
+                    message = "Zadej přezdívku (alespoň 2 znaky)."
+                )
+            )
+            return
+        }
+        val deviceId = GameStorage.getOrCreateDeviceId()
+        val encodedNick = encodeUrlComponent(cleanNick)
+        val recordUrl = "$DB_BASE_URL/high_scores/$GAME_ID/$encodedNick.json"
+        val safeScore = scoreToSubmit.coerceAtLeast(0)
+
+        SoundPlatform.httpRequest(url = recordUrl, method = "GET", jsonBody = null) { getStatus, getBody ->
+            if (getStatus !in 200..299 || getBody == null) {
+                onResult(
+                    SubmitScoreResult(
+                        status = SubmitResultStatus.NETWORK_ERROR,
+                        message = "Chyba připojení k serveru rekordů."
+                    )
+                )
+                return@httpRequest
+            }
+            val trimmed = getBody.trim()
+            if (trimmed.isNotEmpty() && trimmed != "null") {
+                val existingDevice = extractJsonStringField(trimmed, "deviceId")
+                val existingScore = extractJsonIntField(trimmed, "score") ?: 0
+                if (!existingDevice.isNullOrEmpty() && existingDevice != deviceId) {
+                    onResult(
+                        SubmitScoreResult(
+                            status = SubmitResultStatus.NICK_TAKEN,
+                            message = "Přezdívka \"$cleanNick\" už patří jinému hráči! Zvol jinou."
+                        )
+                    )
+                    return@httpRequest
+                }
+                if (existingDevice == deviceId && safeScore <= existingScore) {
+                    GameStorage.savePlayerNick(cleanNick)
+                    if (existingScore > GameStorage.loadTopScore()) {
+                        GameStorage.saveTopScore(existingScore)
+                    }
+                    onResult(
+                        SubmitScoreResult(
+                            status = SubmitResultStatus.SUCCESS,
+                            message = "Přezdívka \"$cleanNick\" je aktivní (tvůj rekord: $existingScore b.).",
+                            syncedScore = existingScore
+                        )
+                    )
+                    return@httpRequest
+                }
+            }
+
+            val payload = "{\"score\":$safeScore,\"deviceId\":\"${escapeJsonString(deviceId)}\"}"
+            SoundPlatform.httpRequest(url = recordUrl, method = "PUT", jsonBody = payload) { putStatus, _ ->
+                when {
+                    putStatus in 200..299 -> {
+                        GameStorage.savePlayerNick(cleanNick)
+                        onResult(
+                            SubmitScoreResult(
+                                status = SubmitResultStatus.SUCCESS,
+                                message = "Rekord $safeScore b. uložen pod přezdívkou \"$cleanNick\"!",
+                                syncedScore = safeScore
+                            )
+                        )
+                    }
+                    putStatus == 401 || putStatus == 403 -> {
+                        onResult(
+                            SubmitScoreResult(
+                                status = SubmitResultStatus.NICK_TAKEN,
+                                message = "Přezdívka \"$cleanNick\" je již obsazena jiným hráčem!"
+                            )
+                        )
+                    }
+                    else -> {
+                        onResult(
+                            SubmitScoreResult(
+                                status = SubmitResultStatus.NETWORK_ERROR,
+                                message = "Nepodařilo se uložit rekord (kód $putStatus)."
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun parseLeaderboardMap(json: String, currentNick: String): List<LeaderboardEntry> {
+        val result = mutableListOf<LeaderboardEntry>()
+        val content = json.trim().removePrefix("{").removeSuffix("}")
+        var i = 0
+        val n = content.length
+        while (i < n) {
+            val keyStart = content.indexOf('"', i)
+            if (keyStart < 0) break
+            val keyEnd = findClosingQuote(content, keyStart + 1)
+            if (keyEnd < 0) break
+            val nick = content.substring(keyStart + 1, keyEnd)
+            val objStart = content.indexOf('{', keyEnd)
+            if (objStart < 0) break
+            val objEnd = findClosingBrace(content, objStart)
+            if (objEnd < 0) break
+            val objStr = content.substring(objStart, objEnd + 1)
+            val score = extractJsonIntField(objStr, "score")
+            if (score != null) {
+                result.add(
+                    LeaderboardEntry(
+                        rank = 0,
+                        nick = nick,
+                        score = score,
+                        isCurrentPlayer = currentNick.isNotEmpty() && nick.equals(currentNick, ignoreCase = true)
+                    )
+                )
+            }
+            i = objEnd + 1
+        }
+        return result
+    }
+
+    private fun findClosingQuote(s: String, startIndex: Int): Int {
+        var idx = startIndex
+        while (idx < s.length) {
+            val ch = s[idx]
+            if (ch == '"' && s[idx - 1] != '\\') {
+                return idx
+            }
+            idx++
+        }
+        return -1
+    }
+
+    private fun findClosingBrace(s: String, openBraceIndex: Int): Int {
+        var depth = 0
+        var inString = false
+        for (idx in openBraceIndex until s.length) {
+            val ch = s[idx]
+            if (ch == '"' && (idx == 0 || s[idx - 1] != '\\')) {
+                inString = !inString
+            } else if (!inString) {
+                if (ch == '{') depth++
+                else if (ch == '}') {
+                    depth--
+                    if (depth == 0) return idx
+                }
+            }
+        }
+        return -1
+    }
+
+    private fun extractJsonStringField(jsonObj: String, field: String): String? {
+        val token = "\"$field\""
+        val pos = jsonObj.indexOf(token)
+        if (pos < 0) return null
+        val colon = jsonObj.indexOf(':', pos + token.length)
+        if (colon < 0) return null
+        val firstQuote = jsonObj.indexOf('"', colon + 1)
+        if (firstQuote < 0) return null
+        val secondQuote = findClosingQuote(jsonObj, firstQuote + 1)
+        if (secondQuote < 0) return null
+        return jsonObj.substring(firstQuote + 1, secondQuote)
+    }
+
+    private fun extractJsonIntField(jsonObj: String, field: String): Int? {
+        val token = "\"$field\""
+        val pos = jsonObj.indexOf(token)
+        if (pos < 0) return null
+        val colon = jsonObj.indexOf(':', pos + token.length)
+        if (colon < 0) return null
+        var idx = colon + 1
+        while (idx < jsonObj.length && (jsonObj[idx].isWhitespace() || jsonObj[idx] == '"')) {
+            idx++
+        }
+        val sb = StringBuilder()
+        if (idx < jsonObj.length && jsonObj[idx] == '-') {
+            sb.append('-')
+            idx++
+        }
+        while (idx < jsonObj.length && jsonObj[idx].isDigit()) {
+            sb.append(jsonObj[idx])
+            idx++
+        }
+        return sb.toString().toIntOrNull()
     }
 }
 
@@ -213,7 +527,6 @@ object RetroSynth {
             F5, E5, D5, C5, B4, A4, GS4, A4,
             B4, REST, E5, REST, A4, REST, REST, REST
         )
-
         val bassNotes = floatArrayOf(
             // Takt 1
             A2, REST, E3, REST, A3, REST, E3, REST,
@@ -228,7 +541,6 @@ object RetroSynth {
             F3, REST, C3, REST, D3, REST, A2, REST,
             E3, REST, B2, REST, A2, REST, E3, REST
         )
-
         return renderChiptunePattern(leadNotes, bassNotes, stepSec, dutyCycle = 0.25f)
     }
 
@@ -249,7 +561,6 @@ object RetroSynth {
             D5, E5, F5, D5, B4, C5, D5, B4,
             C5, REST, G5, REST, C5, REST, REST, REST
         )
-
         val bassNotes = floatArrayOf(
             // Takt 1
             C3, REST, G3, REST, C3, REST, G3, REST,
@@ -264,7 +575,6 @@ object RetroSynth {
             D3, REST, A2, REST, G3, REST, D3, REST,
             C3, REST, G3, REST, C3, REST, G2_FREQ, REST
         )
-
         return renderChiptunePattern(leadNotes, bassNotes, stepSec, dutyCycle = 0.50f)
     }
 
@@ -400,7 +710,6 @@ object RetroSynth {
             sampleCounts[i] = count
             totalSamples += count
         }
-
         val out = ShortArray(totalSamples)
         var cursor = 0
         var phase = 0f
@@ -478,7 +787,6 @@ object RetroSynth {
             val b0 = bytes[i].toInt() and 0xFF
             val b1 = if (i + 1 < bytes.size) bytes[i + 1].toInt() and 0xFF else 0
             val b2 = if (i + 2 < bytes.size) bytes[i + 2].toInt() and 0xFF else 0
-
             val triple = (b0 shl 16) or (b1 shl 8) or b2
             sb.append(BASE64_CHARS[(triple shr 18) and 0x3F])
             sb.append(BASE64_CHARS[(triple shr 12) and 0x3F])

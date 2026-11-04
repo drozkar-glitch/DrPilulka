@@ -19,12 +19,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -45,6 +48,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
@@ -53,6 +57,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -94,7 +99,8 @@ enum class SpeedLevel(val label: String, val shortLabel: String, val baseDelayMs
 
 enum class ScreenMode {
     MENU,
-    PLAYING
+    PLAYING,
+    LEADERBOARD
 }
 
 enum class PlayPhase {
@@ -152,6 +158,7 @@ fun App() {
             mutableStateOf(vMuted)
         }
         var topScore by remember { mutableIntStateOf(GameStorage.loadTopScore()) }
+        var playerNick by remember { mutableStateOf(GameStorage.loadPlayerNick()) }
         var savedGame by remember { mutableStateOf(deserializeSavedGame(GameStorage.loadGameData())) }
         var resumeFromSaved by remember { mutableStateOf(false) }
 
@@ -169,7 +176,7 @@ fun App() {
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color(0xFF070A14))
-                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
             ) {
                 when (screenMode) {
                     ScreenMode.MENU -> {
@@ -180,6 +187,7 @@ fun App() {
                             soundMuted = soundMuted,
                             vibrationMuted = vibrationMuted,
                             topScore = topScore,
+                            playerNick = playerNick,
                             savedGame = savedGame,
                             onLevelChange = { newLvl ->
                                 val clamped = newLvl.coerceIn(0, 20)
@@ -222,6 +230,10 @@ fun App() {
                                     SoundEngine.triggerHaptic(SfxType.ROTATE)
                                 }
                             },
+                            onOpenLeaderboard = {
+                                SoundEngine.playSfx(SfxType.ROTATE)
+                                screenMode = ScreenMode.LEADERBOARD
+                            },
                             onContinueGame = {
                                 val existing = savedGame
                                 if (existing != null) {
@@ -246,7 +258,23 @@ fun App() {
                             }
                         )
                     }
-
+                    ScreenMode.LEADERBOARD -> {
+                        RetroLeaderboardScreen(
+                            topScore = topScore,
+                            currentNick = playerNick,
+                            onNickAndScoreUpdated = { updatedNick, syncedScore ->
+                                playerNick = updatedNick
+                                if (syncedScore > topScore) {
+                                    topScore = syncedScore
+                                    GameStorage.saveTopScore(syncedScore)
+                                }
+                            },
+                            onBack = {
+                                SoundEngine.playSfx(SfxType.MOVE)
+                                screenMode = ScreenMode.MENU
+                            }
+                        )
+                    }
                     ScreenMode.PLAYING -> {
                         DrPilulkaGameScreen(
                             initialLevel = selectedLevel,
@@ -257,9 +285,14 @@ fun App() {
                             topScore = topScore,
                             initialSavedState = if (resumeFromSaved) savedGame else null,
                             onUpdateTopScore = { newScore ->
-                                if (newScore > topScore) {
-                                    topScore = newScore
-                                    GameStorage.saveTopScore(newScore)
+                                if (newScore > topScore || !GameStorage.hasRecordedPersonalScore()) {
+                                    val best = maxOf(newScore, if (GameStorage.hasRecordedPersonalScore()) topScore else newScore)
+                                    topScore = best
+                                    GameStorage.saveTopScore(best)
+                                    val savedNick = GameStorage.loadPlayerNick()
+                                    if (savedNick.length >= 2) {
+                                        OnlineLeaderboard.submitScore(savedNick, best) {}
+                                    }
                                 }
                             },
                             onSaveGameState = { stateToSave ->
@@ -292,6 +325,11 @@ fun App() {
                                     SoundEngine.triggerHaptic(SfxType.ROTATE)
                                 }
                             },
+                            onOpenLeaderboard = {
+                                SoundEngine.stopMusic()
+                                savedGame = deserializeSavedGame(GameStorage.loadGameData())
+                                screenMode = ScreenMode.LEADERBOARD
+                            },
                             onBackToMenu = {
                                 SoundEngine.stopMusic()
                                 savedGame = deserializeSavedGame(GameStorage.loadGameData())
@@ -313,16 +351,19 @@ private fun RetroMenuScreen(
     soundMuted: Boolean,
     vibrationMuted: Boolean,
     topScore: Int,
+    playerNick: String,
     savedGame: SavedGameState?,
     onLevelChange: (Int) -> Unit,
     onSpeedChange: (SpeedLevel) -> Unit,
     onMusicChange: (MusicTrack) -> Unit,
     onToggleMute: () -> Unit,
     onToggleVibration: () -> Unit,
+    onOpenLeaderboard: () -> Unit,
     onContinueGame: () -> Unit,
     onStartNewGame: () -> Unit
 ) {
     var animFrame by remember { mutableIntStateOf(0) }
+
     LaunchedEffect(Unit) {
         while (true) {
             delay(320L)
@@ -340,7 +381,7 @@ private fun RetroMenuScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // 1. Horni retro lista: Rekord vlevo, jednoradkove prepinace Vibraci a Zvuku vpravo
+        // 1. Horni retro lista: Rekord vlevo (klikaci pro otevreni zebricku), prepinace Vibraci a Zvuku vpravo
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -351,15 +392,31 @@ private fun RetroMenuScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "REKORD ${topScore.toString().padStart(7, '0')}",
-                color = Color(0xFFFACC15),
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 13.sp,
-                maxLines = 1,
-                softWrap = false
-            )
+            Column(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { onOpenLeaderboard() }
+                    .padding(vertical = 2.dp, horizontal = 2.dp)
+            ) {
+                Text(
+                    text = "REKORD ${topScore.toString().padStart(7, '0')}",
+                    color = Color(0xFFFACC15),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Text(
+                    text = if (playerNick.isBlank()) "NICK: NENASTAVEN" else "NICK: $playerNick",
+                    color = Color(0xFF38BDF8),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -415,6 +472,7 @@ private fun RetroMenuScreen(
                     drawPixelVirus(Offset(size.width * 0.08f, yOff), cell, cell, PillColor.RED, animFrame)
                     drawPixelVirus(Offset(size.width * 0.31f, yOff), cell, cell, PillColor.YELLOW, animFrame)
                     drawPixelVirus(Offset(size.width * 0.54f, yOff), cell, cell, PillColor.BLUE, animFrame)
+
                     val pillCell = cell * 0.82f
                     val pillY = (size.height - pillCell) / 2f
                     drawCapsuleHalf(
@@ -445,7 +503,7 @@ private fun RetroMenuScreen(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // ÚROVEŇ VIRŮ (00 - 20)
+            // UROVEN VIRU (00 - 20)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
@@ -490,7 +548,7 @@ private fun RetroMenuScreen(
                 }
             }
 
-            // RYCHLOST PÁDU (POMALÁ / STŘEDNÍ / RYCHLÁ)
+            // RYCHLOST PADU (POMALA / STREDNI / RYCHLA)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
@@ -539,7 +597,7 @@ private fun RetroMenuScreen(
                 }
             }
 
-            // DOPROVODNÁ HUDBA (FEVER / CHILL / VYP)
+            // DOPROVODNA HUDBA (FEVER / CHILL / VYP)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
@@ -589,12 +647,32 @@ private fun RetroMenuScreen(
             }
         }
 
-        // 4. Spodni tlacitka (POKRAČOVAT + NOVÁ HRA) a copyright paticka
+        // 4. Spodni tlacitka (ONLINE REKORDY + POKRACOVAT + NOVA HRA) a copyright paticka
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF1E293B))
+                    .border(2.dp, Color(0xFFFACC15), RoundedCornerShape(10.dp))
+                    .clickable { onOpenLeaderboard() }
+                    .padding(vertical = 9.dp, horizontal = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "ONLINE REKORDY (TOP 50)",
+                    color = Color(0xFFFACC15),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
+            }
             if (savedGame != null) {
                 Box(
                     modifier = Modifier
@@ -618,7 +696,6 @@ private fun RetroMenuScreen(
                     )
                 }
             }
-
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -639,9 +716,8 @@ private fun RetroMenuScreen(
                     maxLines = 1
                 )
             }
-
             Text(
-                text = "© 2026 PAVEL MAREŠ",
+                text = "© 2026 Created by Pavel Mareš",
                 color = Color(0xFF94A3B8),
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
@@ -650,6 +726,344 @@ private fun RetroMenuScreen(
                 maxLines = 1
             )
         }
+    }
+}
+
+@Composable
+private fun RetroLeaderboardScreen(
+    topScore: Int,
+    currentNick: String,
+    onNickAndScoreUpdated: (String, Int) -> Unit,
+    onBack: () -> Unit
+) {
+    var nickInput by remember { mutableStateOf(currentNick) }
+    var entries by remember { mutableStateOf<List<LeaderboardEntry>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var isSubmitting by remember { mutableStateOf(false) }
+    var statusText by remember { mutableStateOf<String?>(null) }
+    var statusIsError by remember { mutableStateOf(false) }
+
+    val personalScoreToSend = if (GameStorage.hasRecordedPersonalScore()) topScore else 0
+
+    fun refreshLeaderboard() {
+        isLoading = true
+        OnlineLeaderboard.fetchTopScores(limit = 50) { fetched, err ->
+            isLoading = false
+            entries = fetched
+            if (err != null && statusText == null) {
+                statusText = err
+                statusIsError = true
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshLeaderboard()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // 1. Horni lista okna rekordu
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF0F172A))
+                .border(2.dp, Color(0xFFFACC15), RoundedCornerShape(8.dp))
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "ONLINE REKORDY (TOP 50)",
+                color = Color(0xFFFACC15),
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 14.sp,
+                maxLines = 1
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                MiniHeaderButton(
+                    label = "OBNOVIT",
+                    color = Color(0xFF38BDF8)
+                ) {
+                    SoundEngine.playSfx(SfxType.ROTATE)
+                    statusText = null
+                    refreshLeaderboard()
+                }
+                MiniHeaderButton(
+                    label = "ZPĚT",
+                    color = Color(0xFF64748B)
+                ) {
+                    onBack()
+                }
+            }
+        }
+
+        // 2. Panel pro nastaveni / kontrolu prezdivky a odeslani osobniho rekordu
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF0F172A))
+                .border(2.dp, Color(0xFF3B82F6), RoundedCornerShape(10.dp))
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "TVOJE PŘEZDÍVKA V DR. PILULCE",
+                    color = Color(0xFF93C5FD),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp
+                )
+                Text(
+                    text = "OSOBNÍ: $personalScoreToSend B.",
+                    color = Color(0xFFFACC15),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 11.sp
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF070A14))
+                        .border(2.dp, Color(0xFFE2E8F0), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (nickInput.isEmpty()) {
+                        Text(
+                            text = "Zadej nick (2-14 znaků)...",
+                            color = Color(0xFF64748B),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 13.sp,
+                            maxLines = 1
+                        )
+                    }
+                    BasicTextField(
+                        value = nickInput,
+                        onValueChange = { next ->
+                            if (next.length <= 14) {
+                                nickInput = next.replace("\n", "")
+                            }
+                        },
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            color = Color.White,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 14.sp
+                        ),
+                        cursorBrush = SolidColor(Color(0xFFFACC15)),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSubmitting) Color(0xFF475569) else Color(0xFF22C55E))
+                        .border(2.dp, Color.White, RoundedCornerShape(8.dp))
+                        .clickable(enabled = !isSubmitting) {
+                            isSubmitting = true
+                            statusText = "Ověřuji přezdívku a ukládám..."
+                            statusIsError = false
+                            OnlineLeaderboard.submitScore(
+                                rawNick = nickInput,
+                                scoreToSubmit = personalScoreToSend
+                            ) { res ->
+                                isSubmitting = false
+                                statusText = res.message
+                                statusIsError = res.status != SubmitResultStatus.SUCCESS
+                                if (res.status == SubmitResultStatus.SUCCESS) {
+                                    val clean = OnlineLeaderboard.sanitizeNick(nickInput)
+                                    nickInput = clean
+                                    SoundEngine.playSfx(SfxType.CLEAR)
+                                    onNickAndScoreUpdated(clean, res.syncedScore)
+                                    refreshLeaderboard()
+                                } else {
+                                    SoundEngine.playSfx(SfxType.GAME_OVER)
+                                }
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isSubmitting) "..." else "ULOŽIT",
+                        color = Color(0xFF052E16),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 13.sp,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            if (statusText != null) {
+                Text(
+                    text = statusText ?: "",
+                    color = if (statusIsError) Color(0xFFF87171) else Color(0xFF4ADE80),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp
+                )
+            }
+        }
+
+        // 3. Posuvna tabulka TOP 50 rekordu
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF0F172A))
+                .border(2.dp, Color(0xFF334155), RoundedCornerShape(10.dp))
+                .padding(8.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "#   HRÁČ",
+                    color = Color(0xFF94A3B8),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp
+                )
+                Text(
+                    text = "BODY",
+                    color = Color(0xFF94A3B8),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    isLoading -> {
+                        Text(
+                            text = "Načítám online žebříček...",
+                            color = Color(0xFFFACC15),
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                    entries.isEmpty() -> {
+                        Text(
+                            text = "Zatím žádné záznamy.\nZadej přezdívku a buď první!",
+                            color = Color(0xFF94A3B8),
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    else -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            items(entries) { item ->
+                                val rowBg = when {
+                                    item.isCurrentPlayer -> Color(0xFF1E3A8A)
+                                    item.rank == 1 -> Color(0xFF422006)
+                                    item.rank == 2 -> Color(0xFF1E293B)
+                                    item.rank == 3 -> Color(0xFF27171A)
+                                    else -> Color(0xFF070A14)
+                                }
+                                val rowBorder = when {
+                                    item.isCurrentPlayer -> Color(0xFF38BDF8)
+                                    item.rank == 1 -> Color(0xFFFACC15)
+                                    else -> Color(0xFF1E293B)
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(rowBg)
+                                        .border(1.dp, rowBorder, RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = "${item.rank.toString().padStart(2, ' ')}.",
+                                            color = if (item.rank <= 3) Color(0xFFFACC15) else Color(0xFF94A3B8),
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 13.sp
+                                        )
+                                        Text(
+                                            text = item.nick,
+                                            color = if (item.isCurrentPlayer) Color(0xFF38BDF8) else Color.White,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 13.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+                                    Text(
+                                        text = "${item.score.toString().padStart(7, '0')} B.",
+                                        color = Color(0xFFFACC15),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Spodni tlacitko Zpet a copyright
+        OverlayActionButton("ZPĚT DO MENU", Color(0xFF3B82F6)) {
+            onBack()
+        }
+        Text(
+            text = "© 2026 Created by Pavel Mareš",
+            color = Color(0xFF94A3B8),
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 1
+        )
     }
 }
 
@@ -720,6 +1134,7 @@ private fun DrPilulkaGameScreen(
     onSaveGameState: (SavedGameState?) -> Unit,
     onToggleMute: () -> Unit,
     onToggleVibration: () -> Unit,
+    onOpenLeaderboard: () -> Unit,
     onBackToMenu: () -> Unit
 ) {
     var currentLevel by remember { mutableIntStateOf(initialSavedState?.level ?: initialLevel) }
@@ -734,9 +1149,9 @@ private fun DrPilulkaGameScreen(
     var activeCapsule by remember { mutableStateOf(initialSavedState?.activeCapsule) }
     var nextColorA by remember { mutableStateOf(initialSavedState?.nextColorA ?: randomPillColor()) }
     var nextColorB by remember { mutableStateOf(initialSavedState?.nextColorB ?: randomPillColor()) }
+
     var docThrowTick by remember { mutableIntStateOf(0) }
     var spriteFrame by remember { mutableIntStateOf(0) }
-
     val focusRequester = remember { FocusRequester() }
 
     val redViruses = remember(board) { countViruses(board, PillColor.RED) }
@@ -876,7 +1291,6 @@ private fun DrPilulkaGameScreen(
     fun rotateCapsule(clockwise: Boolean) {
         if (phase != PlayPhase.FALLING) return
         val cap = activeCapsule ?: return
-
         if (!cap.isVertical) {
             val newColorA = if (clockwise) cap.colorB else cap.colorA
             val newColorB = if (clockwise) cap.colorA else cap.colorB
@@ -1005,7 +1419,6 @@ private fun DrPilulkaGameScreen(
                     }
                 }
             }
-
             PlayPhase.CLEARING_ANIM -> {
                 delay(240L)
                 val cleaned = removeClearedCells(board)
@@ -1018,7 +1431,6 @@ private fun DrPilulkaGameScreen(
                     phase = PlayPhase.GRAVITY_STEP
                 }
             }
-
             PlayPhase.GRAVITY_STEP -> {
                 while (phase == PlayPhase.GRAVITY_STEP) {
                     delay(120L)
@@ -1046,7 +1458,6 @@ private fun DrPilulkaGameScreen(
                     }
                 }
             }
-
             else -> Unit
         }
     }
@@ -1092,7 +1503,7 @@ private fun DrPilulkaGameScreen(
             .padding(horizontal = 6.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // 1. HORNÍ LIŠTA: Rekord, Skóre + ovládání pauzy/vibrací/zvuku/menu
+        // 1. HORNI LISTA: Rekord, Skore + ovladani pauzy/vibraci/zvuku/menu
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1121,7 +1532,6 @@ private fun DrPilulkaGameScreen(
                     maxLines = 1
                 )
             }
-
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 MiniHeaderButton(
                     label = if (phase == PlayPhase.PAUSED) "HRA" else "PAUZA",
@@ -1158,7 +1568,7 @@ private fun DrPilulkaGameScreen(
             }
         }
 
-        // 2. HLAVNÍ STŘEDNÍ ČÁST: Zúžené boční panely (0.19f) a rozšířená láhev uprostřed (0.62f)
+        // 2. HLAVNI CAST: Bocni panely (0.19f) a lahev uprostred (0.62f)
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -1171,7 +1581,7 @@ private fun DrPilulkaGameScreen(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // LEVÝ KOMPAKTNÍ PANEL (19 % šířky): Lupa se 3 tančícími viry + počítadlo virů
+                // LEVY KOMPAKTNI PANEL (19 % sirky): Lupa se 3 tancicimi viry + pocitadlo viru
                 Column(
                     modifier = Modifier
                         .weight(0.19f)
@@ -1203,7 +1613,6 @@ private fun DrPilulkaGameScreen(
                                 center = center,
                                 style = Stroke(width = 3f)
                             )
-
                             val vSize = radius * 0.62f
                             if (redViruses > 0) {
                                 drawPixelVirus(
@@ -1235,7 +1644,7 @@ private fun DrPilulkaGameScreen(
                         }
                     }
 
-                    // Tabulka zbývajících virů
+                    // Tabulka zbyvajicich viru
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1266,7 +1675,7 @@ private fun DrPilulkaGameScreen(
                     }
                 }
 
-                // STŘEDNÍ ŠIROKÝ PANEL (62 % šířky): Lékařská láhev 8 × 16
+                // STREDNI SIROKY PANEL (62 % sirky): Lahev 8x16
                 Box(
                     modifier = Modifier
                         .weight(0.62f)
@@ -1277,7 +1686,6 @@ private fun DrPilulkaGameScreen(
                         val neckUnits = 1.25f
                         val maxCellW = size.width / (GRID_COLS + 0.35f)
                         val maxCellH = size.height / (GRID_ROWS + neckUnits + 0.35f)
-
                         val cellH = minOf(maxCellH, maxCellW * 1.05f)
                         val cellW = minOf(maxCellW, cellH * 1.22f)
 
@@ -1400,7 +1808,7 @@ private fun DrPilulkaGameScreen(
                     }
                 }
 
-                // PRAVÝ KOMPAKTNÍ PANEL (19 % šířky): Doktor s další kapslí (DALŠÍ) + statistiky
+                // PRAVY KOMPAKTNI PANEL (19 % sirky): Doktor s dalsi kapsli (DALSI) + statistiky
                 Column(
                     modifier = Modifier
                         .weight(0.19f)
@@ -1454,7 +1862,7 @@ private fun DrPilulkaGameScreen(
                 }
             }
 
-            // Překryvné okno při VYČIŠTĚNÍ LAHVE, KONCI HRY nebo PAUZE
+            // Prekryvne okno pri VYCISTENI LAHVE, KONCI HRY nebo PAUZE
             if (phase == PlayPhase.STAGE_CLEAR || phase == PlayPhase.GAME_OVER || phase == PlayPhase.PAUSED) {
                 Box(
                     modifier = Modifier
@@ -1496,7 +1904,6 @@ private fun DrPilulkaGameScreen(
                                     startStage(nextLvl)
                                 }
                             }
-
                             PlayPhase.GAME_OVER -> {
                                 Text(
                                     text = "KONEC HRY",
@@ -1507,18 +1914,20 @@ private fun DrPilulkaGameScreen(
                                     textAlign = TextAlign.Center
                                 )
                                 Text(
-                                    text = "Hrdlo lahve se ucpalo!\nZbylo virů: $totalViruses",
+                                    text = "Hrdlo lahve se ucpalo!\nSkóre: $score b. • Zbylo virů: $totalViruses",
                                     color = Color(0xFFE2E8F0),
                                     fontFamily = FontFamily.Monospace,
                                     textAlign = TextAlign.Center,
-                                    fontSize = 13.sp
+                                    fontSize = 12.sp
                                 )
                                 OverlayActionButton("ZKUSIT ZNOVU", Color(0xFF3B82F6)) {
                                     score = 0
                                     startStage(currentLevel)
                                 }
+                                OverlayActionButton("ONLINE REKORDY", Color(0xFFB45309)) {
+                                    onOpenLeaderboard()
+                                }
                             }
-
                             PlayPhase.PAUSED -> {
                                 Text(
                                     text = "PAUZA",
@@ -1535,10 +1944,8 @@ private fun DrPilulkaGameScreen(
                                     }
                                 }
                             }
-
                             else -> Unit
                         }
-
                         OverlayActionButton("ZPĚT DO MENU", Color(0xFF475569)) {
                             onBackToMenu()
                         }
@@ -1547,7 +1954,7 @@ private fun DrPilulkaGameScreen(
             }
         }
 
-        // 3. SPODNÍ RETRO OVLÁDACÍ PANEL (NES D-Pad vlevo + kulatá tlačítka se směrem otáčení vpravo)
+        // 3. SPODNI RETRO OVLADACI PANEL (NES D-Pad vlevo + kulata tlacitka se smerem otaceni vpravo)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1562,12 +1969,12 @@ private fun DrPilulkaGameScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                DPadButton("◀", widthDp = 46) { moveHorizontal(-1) }
+                DPadButton("◄", widthDp = 46) { moveHorizontal(-1) }
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     DPadButton("▼", widthDp = 46) { stepDown(fromUserPress = true) }
                     DPadButton("⏬", widthDp = 46) { hardDrop() }
                 }
-                DPadButton("▶", widthDp = 46) { moveHorizontal(1) }
+                DPadButton("►", widthDp = 46) { moveHorizontal(1) }
             }
 
             Row(
@@ -1736,7 +2143,7 @@ private fun ArcadeRoundButton(symbol: String, color: Color, onAction: () -> Unit
 }
 
 // ============================================================================
-// PIXEL-ART VYKRESLOVÁNÍ (VIRY, SPOJENÉ KAPSLE, DOKTOR, EFEKTY)
+// PIXEL-ART VYKRESLOVANI (VIRY, SPOJENE KAPSLE, DOKTOR, EFEKTY)
 // ============================================================================
 
 private fun DrawScope.drawPixelVirus(
@@ -1766,7 +2173,6 @@ private fun DrawScope.drawPixelVirus(
         intArrayOf(0, 0, 1, 0, 0, 1, 0, 0),
         intArrayOf(0, 1, 1, 0, 0, 1, 1, 0)
     )
-
     val matrix = if (frame % 2 == 0) spriteFrame0 else spriteFrame1
     val pxW = cellW / 8f
     val pxH = cellH / 8f
@@ -1925,7 +2331,7 @@ private fun DrawScope.drawPixelDoctor(throwing: Boolean) {
 }
 
 // ============================================================================
-// SERIALIZACE A NAČÍTÁNÍ ROZEHRANÉ HRY
+// SERIALIZACE A NACITANI ROZEHRANE HRY
 // ============================================================================
 
 private fun serializeSavedGame(state: SavedGameState): String {
@@ -1963,7 +2369,6 @@ private fun deserializeSavedGame(raw: String?): SavedGameState? {
     return try {
         val parts = raw.split("|")
         if (parts.size < 10 || parts[0] != "V1") return null
-
         val level = parts[1].toInt().coerceIn(0, 20)
         val score = parts[2].toInt().coerceAtLeast(0)
         val pillsThrown = parts[3].toInt().coerceAtLeast(0)
@@ -2021,7 +2426,7 @@ private fun deserializeSavedGame(raw: String?): SavedGameState? {
 }
 
 // ============================================================================
-// ČISTÁ HERNÍ LOGIKA (GENEROVÁNÍ VIRŮ, MATCH-4, ROZPAD KAPSLÍ A GRAVITACE)
+// CISTA HERNI LOGIKA (GENEROVANI VIRU, MATCH-4, ROZPAD KAPSLI A GRAVITACE)
 // ============================================================================
 
 private fun randomPillColor(): PillColor {
@@ -2057,17 +2462,14 @@ private fun generateBottleWithViruses(level: Int): Array<Array<GridCell>> {
         if (grid[r][c].kind != CellKind.EMPTY) continue
 
         val chosenColor = colors[placed % colors.size]
-
         val horizSame = (c >= 2 && grid[r][c - 1].color == chosenColor && grid[r][c - 2].color == chosenColor) ||
             (c <= GRID_COLS - 3 && grid[r][c + 1].color == chosenColor && grid[r][c + 2].color == chosenColor) ||
             (c in 1..(GRID_COLS - 2) && grid[r][c - 1].color == chosenColor && grid[r][c + 1].color == chosenColor)
-
         val vertSame = (r >= 2 && grid[r - 1][c].color == chosenColor && grid[r - 2][c].color == chosenColor) ||
             (r <= GRID_ROWS - 3 && grid[r + 1][c].color == chosenColor && grid[r + 2][c].color == chosenColor) ||
             (r in 1..(GRID_ROWS - 2) && grid[r - 1][c].color == chosenColor && grid[r + 1][c].color == chosenColor)
 
         if (horizSame || vertSame) continue
-
         grid[r][c] = GridCell(kind = CellKind.VIRUS, color = chosenColor)
         placed += 1
     }
@@ -2237,7 +2639,6 @@ private fun applySingleGravityStep(source: Array<Array<GridCell>>): GravityStepR
                     }
                     c += 1
                 }
-
                 CellKind.BOTTOM -> {
                     if (next[r + 1][c].kind == CellKind.EMPTY) {
                         next[r + 1][c] = cell
@@ -2251,7 +2652,6 @@ private fun applySingleGravityStep(source: Array<Array<GridCell>>): GravityStepR
                     }
                     c += 1
                 }
-
                 CellKind.LEFT -> {
                     if (c + 1 < GRID_COLS && next[r][c + 1].kind == CellKind.RIGHT) {
                         if (next[r + 1][c].kind == CellKind.EMPTY && next[r + 1][c + 1].kind == CellKind.EMPTY) {
@@ -2266,14 +2666,12 @@ private fun applySingleGravityStep(source: Array<Array<GridCell>>): GravityStepR
                         c += 1
                     }
                 }
-
                 else -> {
                     c += 1
                 }
             }
         }
     }
-
     return GravityStepResult(next, moved)
 }
 

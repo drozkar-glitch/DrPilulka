@@ -65,6 +65,38 @@ private fun jsLoadPref(key: String): String = js("""
 })()
 """)
 
+private fun jsHttpFetch(
+    url: String,
+    method: String,
+    body: String,
+    hasBody: Boolean,
+    callback: (Int, String) -> Unit
+): Unit = js("""
+(function() {
+    try {
+        var opts = {
+            method: method,
+            headers: { 'Accept': 'application/json' }
+        };
+        if (hasBody) {
+            opts.headers['Content-Type'] = 'application/json; charset=utf-8';
+            opts.body = body;
+        }
+        fetch(url, opts)
+            .then(function(r) {
+                return r.text().then(function(t) {
+                    callback(r.status, t !== null ? t : "");
+                });
+            })
+            .catch(function(e) {
+                callback(-1, "");
+            });
+    } catch (e) {
+        callback(-1, "");
+    }
+})()
+""")
+
 actual object SoundPlatform {
     private val musicBase64Cache = mutableMapOf<MusicTrack, String>()
     private val sfxBase64Cache = mutableMapOf<SfxType, String>()
@@ -76,6 +108,22 @@ actual object SoundPlatform {
     actual fun loadString(key: String): String? {
         val res = jsLoadPref(key)
         return if (res.isEmpty()) null else res
+    }
+
+    actual fun httpRequest(
+        url: String,
+        method: String,
+        jsonBody: String?,
+        onResult: (statusCode: Int, responseBody: String?) -> Unit
+    ) {
+        jsHttpFetch(
+            url = url,
+            method = method,
+            body = jsonBody ?: "",
+            hasBody = jsonBody != null
+        ) { code, text ->
+            onResult(code, if (code < 0) null else text)
+        }
     }
 
     actual fun vibrate(sfx: SfxType) {
