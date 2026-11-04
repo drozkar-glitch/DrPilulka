@@ -55,7 +55,8 @@ data class SubmitScoreResult(
 )
 
 object GameStorage {
-    private const val KEY_TOP_SCORE = "drpilulka_top_score"
+    private const val KEY_TOP_SCORE_LEGACY = "drpilulka_top_score"
+    private const val KEY_TOP_SCORE_PREFIX = "drpilulka_top_score_"
     private const val KEY_LAST_LEVEL = "drpilulka_last_level"
     private const val KEY_LAST_SPEED = "drpilulka_last_speed"
     private const val KEY_LAST_MUSIC = "drpilulka_last_music"
@@ -65,16 +66,43 @@ object GameStorage {
     private const val KEY_PLAYER_NICK = "drpilulka_player_nick"
     private const val KEY_DEVICE_ID = "drpilulka_device_id"
 
-    fun loadTopScore(): Int {
-        return SoundPlatform.loadString(KEY_TOP_SCORE)?.toIntOrNull() ?: 10000
+    private fun keyForSpeed(speedName: String): String {
+        return "$KEY_TOP_SCORE_PREFIX${speedName.uppercase()}"
     }
 
-    fun hasRecordedPersonalScore(): Boolean {
-        return SoundPlatform.loadString(KEY_TOP_SCORE)?.toIntOrNull() != null
+    fun loadTopScore(speedName: String = loadLastSpeedName()): Int {
+        val norm = speedName.uppercase()
+        val specific = SoundPlatform.loadString(keyForSpeed(norm))?.toIntOrNull()
+        if (specific != null) {
+            return specific
+        }
+        if (norm == "MED") {
+            val legacy = SoundPlatform.loadString(KEY_TOP_SCORE_LEGACY)?.toIntOrNull()
+            if (legacy != null) {
+                SoundPlatform.saveString(keyForSpeed("MED"), legacy.toString())
+                return legacy
+            }
+        }
+        return 10000
     }
 
-    fun saveTopScore(score: Int) {
-        SoundPlatform.saveString(KEY_TOP_SCORE, score.toString())
+    fun hasRecordedPersonalScore(speedName: String = loadLastSpeedName()): Boolean {
+        val norm = speedName.uppercase()
+        if (SoundPlatform.loadString(keyForSpeed(norm))?.toIntOrNull() != null) {
+            return true
+        }
+        if (norm == "MED" && SoundPlatform.loadString(KEY_TOP_SCORE_LEGACY)?.toIntOrNull() != null) {
+            return true
+        }
+        return false
+    }
+
+    fun saveTopScore(score: Int, speedName: String = loadLastSpeedName()) {
+        val norm = speedName.uppercase()
+        SoundPlatform.saveString(keyForSpeed(norm), score.toString())
+        if (norm == "MED") {
+            SoundPlatform.saveString(KEY_TOP_SCORE_LEGACY, score.toString())
+        }
     }
 
     fun loadPlayerNick(): String {
@@ -156,7 +184,10 @@ object GameStorage {
 
 object OnlineLeaderboard {
     private const val DB_BASE_URL = "https://mares-games-default-rtdb.europe-west1.firebasedatabase.app"
-    private const val GAME_ID = "drpilulka"
+
+    private fun categoryNode(speedName: String): String {
+        return "drpilulka_${speedName.lowercase()}"
+    }
 
     fun sanitizeNick(raw: String): String {
         val sb = StringBuilder()
@@ -197,11 +228,13 @@ object OnlineLeaderboard {
     }
 
     fun fetchTopScores(
+        speedName: String,
         limit: Int = 50,
         onResult: (entries: List<LeaderboardEntry>, errorMessage: String?) -> Unit
     ) {
         val currentNick = GameStorage.loadPlayerNick()
-        val url = "$DB_BASE_URL/high_scores/$GAME_ID.json"
+        val node = categoryNode(speedName)
+        val url = "$DB_BASE_URL/high_scores/$node.json"
         SoundPlatform.httpRequest(url = url, method = "GET", jsonBody = null) { status, body ->
             if (status !in 200..299 || body == null) {
                 onResult(emptyList(), "Nelze načíst tabulku (zkontroluj připojení).")
@@ -221,6 +254,7 @@ object OnlineLeaderboard {
     }
 
     fun submitScore(
+        speedName: String,
         rawNick: String,
         scoreToSubmit: Int,
         onResult: (SubmitScoreResult) -> Unit
@@ -237,7 +271,8 @@ object OnlineLeaderboard {
         }
         val deviceId = GameStorage.getOrCreateDeviceId()
         val encodedNick = encodeUrlComponent(cleanNick)
-        val recordUrl = "$DB_BASE_URL/high_scores/$GAME_ID/$encodedNick.json"
+        val node = categoryNode(speedName)
+        val recordUrl = "$DB_BASE_URL/high_scores/$node/$encodedNick.json"
         val safeScore = scoreToSubmit.coerceAtLeast(0)
 
         SoundPlatform.httpRequest(url = recordUrl, method = "GET", jsonBody = null) { getStatus, getBody ->
@@ -265,8 +300,8 @@ object OnlineLeaderboard {
                 }
                 if (existingDevice == deviceId && safeScore <= existingScore) {
                     GameStorage.savePlayerNick(cleanNick)
-                    if (existingScore > GameStorage.loadTopScore()) {
-                        GameStorage.saveTopScore(existingScore)
+                    if (existingScore > GameStorage.loadTopScore(speedName)) {
+                        GameStorage.saveTopScore(existingScore, speedName)
                     }
                     onResult(
                         SubmitScoreResult(

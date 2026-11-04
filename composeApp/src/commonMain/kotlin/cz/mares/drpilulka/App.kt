@@ -61,6 +61,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -157,10 +158,29 @@ fun App() {
             SoundEngine.vibrationEnabled = !vMuted
             mutableStateOf(vMuted)
         }
-        var topScore by remember { mutableIntStateOf(GameStorage.loadTopScore()) }
+        var topScoreLow by remember { mutableIntStateOf(GameStorage.loadTopScore(SpeedLevel.LOW.name)) }
+        var topScoreMed by remember { mutableIntStateOf(GameStorage.loadTopScore(SpeedLevel.MED.name)) }
+        var topScoreHi by remember { mutableIntStateOf(GameStorage.loadTopScore(SpeedLevel.HI.name)) }
         var playerNick by remember { mutableStateOf(GameStorage.loadPlayerNick()) }
         var savedGame by remember { mutableStateOf(deserializeSavedGame(GameStorage.loadGameData())) }
         var resumeFromSaved by remember { mutableStateOf(false) }
+
+        fun getTopScoreFor(spd: SpeedLevel): Int {
+            return when (spd) {
+                SpeedLevel.LOW -> topScoreLow
+                SpeedLevel.MED -> topScoreMed
+                SpeedLevel.HI -> topScoreHi
+            }
+        }
+
+        fun updateTopScoreFor(spd: SpeedLevel, newScore: Int) {
+            when (spd) {
+                SpeedLevel.LOW -> topScoreLow = newScore
+                SpeedLevel.MED -> topScoreMed = newScore
+                SpeedLevel.HI -> topScoreHi = newScore
+            }
+            GameStorage.saveTopScore(newScore, spd.name)
+        }
 
         DisposableEffect(Unit) {
             onDispose {
@@ -186,7 +206,7 @@ fun App() {
                             music = selectedMusic,
                             soundMuted = soundMuted,
                             vibrationMuted = vibrationMuted,
-                            topScore = topScore,
+                            topScore = getTopScoreFor(selectedSpeed),
                             playerNick = playerNick,
                             savedGame = savedGame,
                             onLevelChange = { newLvl ->
@@ -260,13 +280,13 @@ fun App() {
                     }
                     ScreenMode.LEADERBOARD -> {
                         RetroLeaderboardScreen(
-                            topScore = topScore,
+                            initialSpeed = selectedSpeed,
+                            getTopScoreForSpeed = { spd -> getTopScoreFor(spd) },
                             currentNick = playerNick,
-                            onNickAndScoreUpdated = { updatedNick, syncedScore ->
+                            onNickAndScoreUpdated = { spd, updatedNick, syncedScore ->
                                 playerNick = updatedNick
-                                if (syncedScore > topScore) {
-                                    topScore = syncedScore
-                                    GameStorage.saveTopScore(syncedScore)
+                                if (syncedScore > getTopScoreFor(spd)) {
+                                    updateTopScoreFor(spd, syncedScore)
                                 }
                             },
                             onBack = {
@@ -276,22 +296,23 @@ fun App() {
                         )
                     }
                     ScreenMode.PLAYING -> {
+                        val activeSpeedScore = getTopScoreFor(selectedSpeed)
                         DrPilulkaGameScreen(
                             initialLevel = selectedLevel,
                             speed = selectedSpeed,
                             music = selectedMusic,
                             soundMuted = soundMuted,
                             vibrationMuted = vibrationMuted,
-                            topScore = topScore,
+                            topScore = activeSpeedScore,
                             initialSavedState = if (resumeFromSaved) savedGame else null,
                             onUpdateTopScore = { newScore ->
-                                if (newScore > topScore || !GameStorage.hasRecordedPersonalScore()) {
-                                    val best = maxOf(newScore, if (GameStorage.hasRecordedPersonalScore()) topScore else newScore)
-                                    topScore = best
-                                    GameStorage.saveTopScore(best)
+                                val recordedBefore = GameStorage.hasRecordedPersonalScore(selectedSpeed.name)
+                                if (newScore > activeSpeedScore || !recordedBefore) {
+                                    val best = if (recordedBefore) maxOf(newScore, activeSpeedScore) else newScore
+                                    updateTopScoreFor(selectedSpeed, best)
                                     val savedNick = GameStorage.loadPlayerNick()
                                     if (savedNick.length >= 2) {
-                                        OnlineLeaderboard.submitScore(savedNick, best) {}
+                                        OnlineLeaderboard.submitScore(selectedSpeed.name, savedNick, best) {}
                                     }
                                 }
                             },
@@ -381,59 +402,39 @@ private fun RetroMenuScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // 1. Horni retro lista: Rekord vlevo (klikaci pro otevreni zebricku), prepinace Vibraci a Zvuku vpravo
+        // 1. Horni cista lista: vlevo rekord pro aktualni rychlost padu, vpravo nick
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color(0xFF0F172A))
                 .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
-                .padding(horizontal = 10.dp, vertical = 7.dp),
+                .clickable { onOpenLeaderboard() }
+                .padding(horizontal = 12.dp, vertical = 9.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable { onOpenLeaderboard() }
-                    .padding(vertical = 2.dp, horizontal = 2.dp)
-            ) {
-                Text(
-                    text = "REKORD ${topScore.toString().padStart(7, '0')}",
-                    color = Color(0xFFFACC15),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    softWrap = false
-                )
-                Text(
-                    text = if (playerNick.isBlank()) "NICK: NENASTAVEN" else "NICK: $playerNick",
-                    color = Color(0xFF38BDF8),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                MenuToggleChip(
-                    label = if (vibrationMuted) "VIB: VYP" else "VIB: ZAP",
-                    active = !vibrationMuted,
-                    activeColor = Color(0xFF38BDF8),
-                    onClick = onToggleVibration
-                )
-                MenuToggleChip(
-                    label = if (soundMuted) "ZVUK: VYP" else "ZVUK: ZAP",
-                    active = !soundMuted,
-                    activeColor = Color(0xFF4ADE80),
-                    onClick = onToggleMute
-                )
-            }
+            Text(
+                text = "REKORD (${speed.shortLabel}): ${topScore.toString().padStart(7, '0')}",
+                color = Color(0xFFFACC15),
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 13.sp,
+                maxLines = 1,
+                softWrap = false
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (playerNick.isBlank()) "NICK: NENASTAVEN" else "NICK: $playerNick",
+                color = Color(0xFF38BDF8),
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.End,
+                modifier = Modifier.weight(1f)
+            )
         }
 
         // 2. Pixel-artovy banner s doktorem a viry
@@ -466,7 +467,7 @@ private fun RetroMenuScreen(
                     maxLines = 1
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                Canvas(modifier = Modifier.size(width = 216.dp, height = 44.dp)) {
+                Canvas(modifier = Modifier.size(width = 216.dp, height = 42.dp)) {
                     val cell = size.height * 0.72f
                     val yOff = (size.height - cell) / 2f
                     drawPixelVirus(Offset(size.width * 0.08f, yOff), cell, cell, PillColor.RED, animFrame)
@@ -493,7 +494,7 @@ private fun RetroMenuScreen(
             }
         }
 
-        // 3. Nastaveni hry
+        // 3. Nastaveni hry (vcetne prepinacu Zvuku a Vibraci dole u hudby)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -501,7 +502,7 @@ private fun RetroMenuScreen(
                 .background(Color(0xFF0F172A))
                 .border(2.dp, Color(0xFF3B82F6), RoundedCornerShape(12.dp))
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
             // UROVEN VIRU (00 - 20)
             Column(
@@ -517,7 +518,7 @@ private fun RetroMenuScreen(
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -531,7 +532,7 @@ private fun RetroMenuScreen(
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF070A14))
                             .border(2.dp, Color(0xFFE2E8F0), RoundedCornerShape(6.dp))
-                            .padding(vertical = 5.dp),
+                            .padding(vertical = 4.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -562,7 +563,7 @@ private fun RetroMenuScreen(
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -597,13 +598,13 @@ private fun RetroMenuScreen(
                 }
             }
 
-            // DOPROVODNA HUDBA (FEVER / CHILL / VYP)
+            // DOPROVODNA HUDBA + ZVUK A VIBRACE
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "DOPROVODNÁ 8-BIT HUDBA",
+                    text = "DOPROVODNÁ 8-BIT HUDBA A EFEKTY",
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
@@ -611,7 +612,7 @@ private fun RetroMenuScreen(
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -642,6 +643,58 @@ private fun RetroMenuScreen(
                                 softWrap = false
                             )
                         }
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(
+                                width = 1.5.dp,
+                                color = if (!soundMuted) Color(0xFF4ADE80) else Color(0xFF475569),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .clickable { onToggleMute() }
+                            .padding(vertical = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (soundMuted) "ZVUK: VYPNUT" else "ZVUK: ZAPNUT",
+                            color = if (!soundMuted) Color(0xFF4ADE80) else Color(0xFFF87171),
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(
+                                width = 1.5.dp,
+                                color = if (!vibrationMuted) Color(0xFF38BDF8) else Color(0xFF475569),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .clickable { onToggleVibration() }
+                            .padding(vertical = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (vibrationMuted) "VIBRACE: VYP" else "VIBRACE: ZAP",
+                            color = if (!vibrationMuted) Color(0xFF38BDF8) else Color(0xFFF87171),
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
                     }
                 }
             }
@@ -731,11 +784,13 @@ private fun RetroMenuScreen(
 
 @Composable
 private fun RetroLeaderboardScreen(
-    topScore: Int,
+    initialSpeed: SpeedLevel,
+    getTopScoreForSpeed: (SpeedLevel) -> Int,
     currentNick: String,
-    onNickAndScoreUpdated: (String, Int) -> Unit,
+    onNickAndScoreUpdated: (SpeedLevel, String, Int) -> Unit,
     onBack: () -> Unit
 ) {
+    var selectedTabSpeed by remember { mutableStateOf(initialSpeed) }
     var nickInput by remember { mutableStateOf("") }
     var entries by remember { mutableStateOf<List<LeaderboardEntry>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -743,11 +798,12 @@ private fun RetroLeaderboardScreen(
     var statusText by remember { mutableStateOf<String?>(null) }
     var statusIsError by remember { mutableStateOf(false) }
 
-    val personalScoreToSend = if (GameStorage.hasRecordedPersonalScore()) topScore else 0
+    val hasPersonalForTab = GameStorage.hasRecordedPersonalScore(selectedTabSpeed.name)
+    val personalScoreToSend = if (hasPersonalForTab) getTopScoreForSpeed(selectedTabSpeed) else 0
 
-    fun refreshLeaderboard() {
+    fun refreshLeaderboard(targetSpeed: SpeedLevel = selectedTabSpeed) {
         isLoading = true
-        OnlineLeaderboard.fetchTopScores(limit = 50) { fetched, err ->
+        OnlineLeaderboard.fetchTopScores(speedName = targetSpeed.name, limit = 50) { fetched, err ->
             isLoading = false
             entries = fetched
             if (err != null && statusText == null) {
@@ -757,16 +813,18 @@ private fun RetroLeaderboardScreen(
         }
     }
 
-    LaunchedEffect(currentNick) {
-        if (currentNick.isNotBlank() && personalScoreToSend > 0) {
-            OnlineLeaderboard.submitScore(currentNick, personalScoreToSend) { res ->
-                if (res.status == SubmitResultStatus.SUCCESS && res.syncedScore > topScore) {
-                    onNickAndScoreUpdated(currentNick, res.syncedScore)
+    LaunchedEffect(selectedTabSpeed, currentNick) {
+        val hasScore = GameStorage.hasRecordedPersonalScore(selectedTabSpeed.name)
+        val scoreVal = if (hasScore) getTopScoreForSpeed(selectedTabSpeed) else 0
+        if (currentNick.isNotBlank() && scoreVal > 0) {
+            OnlineLeaderboard.submitScore(selectedTabSpeed.name, currentNick, scoreVal) { res ->
+                if (res.status == SubmitResultStatus.SUCCESS && res.syncedScore > scoreVal) {
+                    onNickAndScoreUpdated(selectedTabSpeed, currentNick, res.syncedScore)
                 }
-                refreshLeaderboard()
+                refreshLeaderboard(selectedTabSpeed)
             }
         } else {
-            refreshLeaderboard()
+            refreshLeaderboard(selectedTabSpeed)
         }
     }
 
@@ -777,7 +835,7 @@ private fun RetroLeaderboardScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 1. Horni lista okna rekordu
+        // 1. Horni lista okna rekordu (pruzny nadpis + cele tlacitko OBNOVIT bez orezani)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -794,27 +852,63 @@ private fun RetroLeaderboardScreen(
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.ExtraBold,
                 fontSize = 14.sp,
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                MiniHeaderButton(
-                    label = "OBNOVIT",
-                    color = Color(0xFF38BDF8)
+            MiniHeaderButton(
+                label = "OBNOVIT",
+                color = Color(0xFF38BDF8)
+            ) {
+                SoundEngine.playSfx(SfxType.ROTATE)
+                statusText = null
+                refreshLeaderboard(selectedTabSpeed)
+            }
+        }
+
+        // 2. Prepinac kategorii podle rychlosti padu (POMALA / STREDNI / RYCHLA)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SpeedLevel.entries.forEach { spdItem ->
+                val selected = spdItem == selectedTabSpeed
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) Color(0xFFEF4444) else Color(0xFF0F172A))
+                        .border(
+                            width = 2.dp,
+                            color = if (selected) Color.White else Color(0xFF334155),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .clickable {
+                            if (selectedTabSpeed != spdItem) {
+                                SoundEngine.playSfx(SfxType.ROTATE)
+                                statusText = null
+                                selectedTabSpeed = spdItem
+                            }
+                        }
+                        .padding(vertical = 7.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    SoundEngine.playSfx(SfxType.ROTATE)
-                    statusText = null
-                    refreshLeaderboard()
-                }
-                MiniHeaderButton(
-                    label = "ZPĚT",
-                    color = Color(0xFF64748B)
-                ) {
-                    onBack()
+                    Text(
+                        text = spdItem.label,
+                        color = Color.White,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         }
 
-        // 2. Jednorazove zadani nicku (po ulozeni se zamkne a zmizi)
+        // 3. Jednorazove zadani nicku (po ulozeni se zamkne a zmizi)
         if (currentNick.isBlank()) {
             Column(
                 modifier = Modifier
@@ -835,14 +929,18 @@ private fun RetroLeaderboardScreen(
                         color = Color(0xFF93C5FD),
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
                     )
                     Text(
                         text = "OSOBNÍ: $personalScoreToSend B.",
                         color = Color(0xFFFACC15),
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 11.sp
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
 
@@ -898,6 +996,7 @@ private fun RetroLeaderboardScreen(
                                 statusText = "Ověřuji přezdívku a ukládám..."
                                 statusIsError = false
                                 OnlineLeaderboard.submitScore(
+                                    speedName = selectedTabSpeed.name,
                                     rawNick = nickInput,
                                     scoreToSubmit = personalScoreToSend
                                 ) { res ->
@@ -907,8 +1006,8 @@ private fun RetroLeaderboardScreen(
                                         statusText = null
                                         statusIsError = false
                                         SoundEngine.playSfx(SfxType.CLEAR)
-                                        onNickAndScoreUpdated(clean, res.syncedScore)
-                                        refreshLeaderboard()
+                                        onNickAndScoreUpdated(selectedTabSpeed, clean, res.syncedScore)
+                                        refreshLeaderboard(selectedTabSpeed)
                                     } else {
                                         statusText = res.message
                                         statusIsError = true
@@ -941,14 +1040,14 @@ private fun RetroLeaderboardScreen(
                 }
             }
         } else {
-            // Uzamceny informacni prouzek po ulozeni nicku
+            // Uzamceny informacni prouzek po ulozeni nicku (s oddelenim a celym skore vpravo)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF0F172A))
                     .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -958,20 +1057,25 @@ private fun RetroLeaderboardScreen(
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 12.sp,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
                 )
                 Text(
-                    text = "OSOBNÍ REKORD: ${personalScoreToSend.toString().padStart(7, '0')} B.",
+                    text = "OSOBNÍ: ${personalScoreToSend.toString().padStart(7, '0')} B.",
                     color = Color(0xFFFACC15),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 12.sp,
-                    maxLines = 1
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
 
-        // 3. Posuvna tabulka TOP 50 rekordu
+        // 4. Posuvna tabulka TOP 50 rekordu pro zvolenou rychlost
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -988,7 +1092,7 @@ private fun RetroLeaderboardScreen(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "#   HRÁČ",
+                    text = "#   HRÁČ (${selectedTabSpeed.label})",
                     color = Color(0xFF94A3B8),
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
@@ -1022,9 +1126,9 @@ private fun RetroLeaderboardScreen(
                     entries.isEmpty() -> {
                         Text(
                             text = if (currentNick.isBlank()) {
-                                "Zatím žádné záznamy.\nZadej přezdívku nahoře a buď první!"
+                                "V kategorii ${selectedTabSpeed.label} zatím nikdo není.\nZadej přezdívku nahoře a buď první!"
                             } else {
-                                "Zatím žádné záznamy v tabulce."
+                                "V kategorii ${selectedTabSpeed.label} zatím nejsou žádné záznamy."
                             },
                             color = Color(0xFF94A3B8),
                             fontFamily = FontFamily.Monospace,
@@ -1063,7 +1167,10 @@ private fun RetroLeaderboardScreen(
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp)
                                     ) {
                                         Text(
                                             text = "${item.rank.toString().padStart(2, ' ')}.",
@@ -1078,7 +1185,8 @@ private fun RetroLeaderboardScreen(
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.ExtraBold,
                                             fontSize = 13.sp,
-                                            maxLines = 1
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                     Text(
@@ -1086,7 +1194,9 @@ private fun RetroLeaderboardScreen(
                                         color = Color(0xFFFACC15),
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 13.sp
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
@@ -1096,7 +1206,7 @@ private fun RetroLeaderboardScreen(
             }
         }
 
-        // 4. Spodni tlacitko Zpet a copyright
+        // 5. Spodni tlacitko Zpet a copyright
         OverlayActionButton("ZPĚT DO MENU", Color(0xFF3B82F6)) {
             onBack()
         }
@@ -1108,38 +1218,6 @@ private fun RetroLeaderboardScreen(
             fontSize = 11.sp,
             textAlign = TextAlign.Center,
             maxLines = 1
-        )
-    }
-}
-
-@Composable
-private fun MenuToggleChip(
-    label: String,
-    active: Boolean,
-    activeColor: Color,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color(0xFF1E293B))
-            .border(
-                width = 1.dp,
-                color = if (active) activeColor else Color(0xFF475569),
-                shape = RoundedCornerShape(6.dp)
-            )
-            .clickable { onClick() }
-            .padding(horizontal = 8.dp, vertical = 5.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            color = if (active) activeColor else Color(0xFFF87171),
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            fontSize = 10.sp,
-            maxLines = 1,
-            softWrap = false
         )
     }
 }
@@ -2045,7 +2123,7 @@ private fun MiniHeaderButton(label: String, color: Color, onClick: () -> Unit) {
             .background(color.copy(alpha = 0.2f))
             .border(1.dp, color, RoundedCornerShape(6.dp))
             .clickable { onClick() }
-            .padding(horizontal = 6.dp, vertical = 5.dp)
+            .padding(horizontal = 8.dp, vertical = 5.dp)
     ) {
         Text(
             text = label,
