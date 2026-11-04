@@ -736,7 +736,7 @@ private fun RetroLeaderboardScreen(
     onNickAndScoreUpdated: (String, Int) -> Unit,
     onBack: () -> Unit
 ) {
-    var nickInput by remember { mutableStateOf(currentNick) }
+    var nickInput by remember { mutableStateOf("") }
     var entries by remember { mutableStateOf<List<LeaderboardEntry>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var isSubmitting by remember { mutableStateOf(false) }
@@ -757,8 +757,17 @@ private fun RetroLeaderboardScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        refreshLeaderboard()
+    LaunchedEffect(currentNick) {
+        if (currentNick.isNotBlank() && personalScoreToSend > 0) {
+            OnlineLeaderboard.submitScore(currentNick, personalScoreToSend) { res ->
+                if (res.status == SubmitResultStatus.SUCCESS && res.syncedScore > topScore) {
+                    onNickAndScoreUpdated(currentNick, res.syncedScore)
+                }
+                refreshLeaderboard()
+            }
+        } else {
+            refreshLeaderboard()
+        }
     }
 
     Column(
@@ -805,127 +814,159 @@ private fun RetroLeaderboardScreen(
             }
         }
 
-        // 2. Panel pro nastaveni / kontrolu prezdivky a odeslani osobniho rekordu
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color(0xFF0F172A))
-                .border(2.dp, Color(0xFF3B82F6), RoundedCornerShape(10.dp))
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        // 2. Jednorazove zadani nicku (po ulozeni se zamkne a zmizi)
+        if (currentNick.isBlank()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF0F172A))
+                    .border(2.dp, Color(0xFF3B82F6), RoundedCornerShape(10.dp))
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "TVOJE PŘEZDÍVKA V DR. PILULCE",
-                    color = Color(0xFF93C5FD),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp
-                )
-                Text(
-                    text = "OSOBNÍ: $personalScoreToSend B.",
-                    color = Color(0xFFFACC15),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 11.sp
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF070A14))
-                        .border(2.dp, Color(0xFFE2E8F0), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 9.dp),
-                    contentAlignment = Alignment.CenterStart
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (nickInput.isEmpty()) {
+                    Text(
+                        text = "ZVOL SI PŘEZDÍVKU (JEDNORÁZOVĚ)",
+                        color = Color(0xFF93C5FD),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
+                    )
+                    Text(
+                        text = "OSOBNÍ: $personalScoreToSend B.",
+                        color = Color(0xFFFACC15),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.sp
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF070A14))
+                            .border(2.dp, Color(0xFFE2E8F0), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 9.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (nickInput.isEmpty()) {
+                            Text(
+                                text = "Zadej nick (2-14 znaků)...",
+                                color = Color(0xFF64748B),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                maxLines = 1
+                            )
+                        }
+                        BasicTextField(
+                            value = nickInput,
+                            onValueChange = { next ->
+                                if (next.length <= 14) {
+                                    nickInput = next.replace("\n", "")
+                                }
+                            },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = Color.White,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 14.sp
+                            ),
+                            cursorBrush = SolidColor(Color(0xFFFACC15)),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSubmitting) Color(0xFF475569) else Color(0xFF22C55E))
+                            .border(2.dp, Color.White, RoundedCornerShape(8.dp))
+                            .clickable(enabled = !isSubmitting) {
+                                isSubmitting = true
+                                statusText = "Ověřuji přezdívku a ukládám..."
+                                statusIsError = false
+                                OnlineLeaderboard.submitScore(
+                                    rawNick = nickInput,
+                                    scoreToSubmit = personalScoreToSend
+                                ) { res ->
+                                    isSubmitting = false
+                                    if (res.status == SubmitResultStatus.SUCCESS) {
+                                        val clean = OnlineLeaderboard.sanitizeNick(nickInput)
+                                        statusText = null
+                                        statusIsError = false
+                                        SoundEngine.playSfx(SfxType.CLEAR)
+                                        onNickAndScoreUpdated(clean, res.syncedScore)
+                                        refreshLeaderboard()
+                                    } else {
+                                        statusText = res.message
+                                        statusIsError = true
+                                        SoundEngine.playSfx(SfxType.GAME_OVER)
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Text(
-                            text = "Zadej nick (2-14 znaků)...",
-                            color = Color(0xFF64748B),
+                            text = if (isSubmitting) "..." else "ULOŽIT",
+                            color = Color(0xFF052E16),
                             fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
                             fontSize = 13.sp,
                             maxLines = 1
                         )
                     }
-                    BasicTextField(
-                        value = nickInput,
-                        onValueChange = { next ->
-                            if (next.length <= 14) {
-                                nickInput = next.replace("\n", "")
-                            }
-                        },
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            color = Color.White,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 14.sp
-                        ),
-                        cursorBrush = SolidColor(Color(0xFFFACC15)),
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isSubmitting) Color(0xFF475569) else Color(0xFF22C55E))
-                        .border(2.dp, Color.White, RoundedCornerShape(8.dp))
-                        .clickable(enabled = !isSubmitting) {
-                            isSubmitting = true
-                            statusText = "Ověřuji přezdívku a ukládám..."
-                            statusIsError = false
-                            OnlineLeaderboard.submitScore(
-                                rawNick = nickInput,
-                                scoreToSubmit = personalScoreToSend
-                            ) { res ->
-                                isSubmitting = false
-                                statusText = res.message
-                                statusIsError = res.status != SubmitResultStatus.SUCCESS
-                                if (res.status == SubmitResultStatus.SUCCESS) {
-                                    val clean = OnlineLeaderboard.sanitizeNick(nickInput)
-                                    nickInput = clean
-                                    SoundEngine.playSfx(SfxType.CLEAR)
-                                    onNickAndScoreUpdated(clean, res.syncedScore)
-                                    refreshLeaderboard()
-                                } else {
-                                    SoundEngine.playSfx(SfxType.GAME_OVER)
-                                }
-                            }
-                        }
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+                if (statusText != null) {
                     Text(
-                        text = if (isSubmitting) "..." else "ULOŽIT",
-                        color = Color(0xFF052E16),
+                        text = statusText ?: "",
+                        color = if (statusIsError) Color(0xFFF87171) else Color(0xFF4ADE80),
                         fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 13.sp,
-                        maxLines = 1
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
                     )
                 }
             }
-
-            if (statusText != null) {
+        } else {
+            // Uzamceny informacni prouzek po ulozeni nicku
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF0F172A))
+                    .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = statusText ?: "",
-                    color = if (statusIsError) Color(0xFFF87171) else Color(0xFF4ADE80),
+                    text = "HRÁČ: $currentNick",
+                    color = Color(0xFF38BDF8),
                     fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 12.sp,
+                    maxLines = 1
+                )
+                Text(
+                    text = "OSOBNÍ REKORD: ${personalScoreToSend.toString().padStart(7, '0')} B.",
+                    color = Color(0xFFFACC15),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 12.sp,
+                    maxLines = 1
                 )
             }
         }
@@ -980,7 +1021,11 @@ private fun RetroLeaderboardScreen(
                     }
                     entries.isEmpty() -> {
                         Text(
-                            text = "Zatím žádné záznamy.\nZadej přezdívku a buď první!",
+                            text = if (currentNick.isBlank()) {
+                                "Zatím žádné záznamy.\nZadej přezdívku nahoře a buď první!"
+                            } else {
+                                "Zatím žádné záznamy v tabulce."
+                            },
                             color = Color(0xFF94A3B8),
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
